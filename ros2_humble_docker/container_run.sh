@@ -19,12 +19,11 @@ fi
 # Assign the arguments to variables for clarity
 CONTAINER_NAME="$1"
 IMAGE_NAME="$2"
-PROJECT_DIR="/path/to/your/superodom"
-DATASET_DIR="/path/to/your/dataset"
+PROJECT_DIR="/home/qb/SuperMap_ws/release_livox/subt_state_estimation"
+DATASET_DIR="/home/qb/tartanAirTest"
 
 # Launch the nvidia-docker container with the provided image name and tag
 docker run --privileged -it \
-            --gpus all \
            -e NVIDIA_DRIVER_CAPABILITIES=all \
            -e NVIDIA_VISIBLE_DEVICES=all \
            --volume="$PROJECT_DIR:/root/ros2_ws/src" \

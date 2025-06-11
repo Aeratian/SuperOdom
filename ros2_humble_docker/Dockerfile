@@ -53,7 +53,7 @@ RUN pip3 install --no-cache-dir pyyaml pycryptodome bagpy Cython
 
 RUN apt-get -y install python3-rosdep python3-rosinstall python3-rosinstall-generator python3-wstool build-essential
 # RUN sudo rosdep init
-RUN rosdep update
+RUN sudo rosdep update
 RUN pip3 install -U catkin_tools gym
 RUN apt-get -y install ros-humble-grid-map-msgs ros-humble-grid-map
 

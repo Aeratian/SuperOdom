@@ -489,10 +489,11 @@ namespace super_odometry {
             double lidar_end_time = lidar_start_time + lidar_msg->back().time;
 
             RCLCPP_INFO(this->get_logger(), "\033[1;32m----> no IMU data, running LiDAR Odometry only.\033[0m");
-            Eigen::Quaterniond default_quaternion = Eigen::Quaterniond::Identity();
+            Eigen::Quaterniond zero_quaternion = Eigen::Quaterniond(0,0,0,0); 
             
-            // Extract features and publish with default quaternion
-            extractFeatures(lidar_start_time, lidar_msg, default_quaternion);
+            // Extract features and publish with zero quaternion 
+            // to notify mapping to use constant velocity prediction
+            extractFeatures(lidar_start_time, lidar_msg, zero_quaternion);
         }
         else
         {
@@ -762,6 +763,7 @@ namespace super_odometry {
 
         if(IMU_INIT==true or imuBuf.empty())
         {   
+            RCLCPP_ERROR(this->get_logger(), "[TartanAir]jump inside to this function?");
             undistortionAndFeatureExtraction();
             double lidar_first_time;
             lidarBuf.getFirstTime(lidar_first_time);
