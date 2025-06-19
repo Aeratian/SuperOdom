@@ -10,8 +10,8 @@
 
 #include <tbb/concurrent_vector.h>
 
-#include <tf2/LinearMath/Quaternion.h>
-#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
+#include <tf/transform_datatypes.h>
+#include <tf/LinearMath/Quaternion.h>
 
 #include "super_odometry/sensor_data/pointcloud/LidarPoint.h"
 #include "super_odometry/LidarProcess/LocalMap.h"
@@ -19,10 +19,13 @@
 
 #include "super_odometry/utils/EigenTypes.h"
 #include "super_odometry/utils/Twist.h"
-#include <super_odometry_msgs/msg/optimization_stats.hpp>
+#include <super_odometry_msgs/OptimizationStats.h>
+#include <super_odometry_msgs/IterationStats.h>
 
 #include <sophus/se3.hpp>
-#include <std_msgs/msg/float32.hpp>
+#include <std_msgs/Float32.h>
+#include <sensor_msgs/PointCloud2.h>
+#include <ros/ros.h>
 
 // #include "super_odometry/LidarProcess/Utilities.h"
 #include "super_odometry/LidarProcess/factor/SE3AbsolutatePoseFactor.h"
@@ -115,7 +118,7 @@ namespace super_odometry {
     public:
 
         struct LaserOptSet {
-            tf2::Quaternion imu_roll_pitch;
+            tf::Quaternion imu_roll_pitch;
             bool  debug_view_enabled;
             bool  use_imu_roll_pitch;
             float velocity_failure_threshold;
@@ -199,12 +202,12 @@ namespace super_odometry {
             double uncertainty_yaw;
         };
 
-        rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr pubUncertaintyX;
-        rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr pubUncertaintyY;
-        rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr pubUncertaintyZ;
-        rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr pubUncertaintyRoll;
-        rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr pubUncertaintyPitch;
-        rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr pubUncertaintyYaw;;
+        ros::Publisher pubUncertaintyX;
+        ros::Publisher pubUncertaintyY;
+        ros::Publisher pubUncertaintyZ;
+        ros::Publisher pubUncertaintyRoll;
+        ros::Publisher pubUncertaintyPitch;
+        ros::Publisher pubUncertaintyYaw;
 
         struct OptimizationParameter {
             EIGEN_MAKE_ALIGNED_OPERATOR_NEW
@@ -224,7 +227,7 @@ namespace super_odometry {
     public:
         LocalMap localMap;
     
-        super_odometry_msgs::msg::OptimizationStats stats;
+        super_odometry_msgs::OptimizationStats stats;
         RegistrationError LocalizationUncertainty;
         LidarOdomUncertainty lidarOdomUncer;
         LaserOptSet OptSet;
@@ -280,7 +283,7 @@ namespace super_odometry {
 
         double LocalizationLineMaxDistInlier = 0.2;
  
-        rclcpp::Node::SharedPtr node_;
+        ros::NodeHandle* node_;
 
 
 
@@ -307,7 +310,7 @@ namespace super_odometry {
 
         void MannualYawCorrection();
 
-        void initROSInterface(rclcpp::Node::SharedPtr);
+        void initROSInterface(ros::NodeHandle&);
 
         void initializeState(bool initialization, const Transformd&position);
 
@@ -347,14 +350,14 @@ namespace super_odometry {
         
         ceres::Solver::Summary solveOptimizationProblem(ceres::Problem&problem);
 
-        void recordIterationStats(super_odometry_msgs::msg::IterationStats&iter_stats,
+        void recordIterationStats(super_odometry_msgs::IterationStats&iter_stats,
         int surf_num, int edge_num, Transformd&previous_T, Transformd&current_T);
 
-        void performPostOptimizationProcessing(double timeLaserOdometry, TicToc &t_opt, super_odometry_msgs::msg::OptimizationStats &stats);
+        void performPostOptimizationProcessing(double timeLaserOdometry, TicToc &t_opt, super_odometry_msgs::OptimizationStats &stats);
 
-        bool checkMotionThresholds(double timeLaserOdometry, super_odometry_msgs::msg::OptimizationStats &stats);
+        bool checkMotionThresholds(double timeLaserOdometry, super_odometry_msgs::OptimizationStats &stats);
 
-        void updateOptimizationStats(TicToc &t_opt, super_odometry_msgs::msg::OptimizationStats &stats);
+        void updateOptimizationStats(TicToc &t_opt, super_odometry_msgs::OptimizationStats &stats);
         
         bool initializeAndTransformPoint(const Point &p, Eigen::Vector3d &pInit, Eigen::Vector3d &pFinal);
         

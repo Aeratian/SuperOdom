@@ -11,37 +11,33 @@
 #include <fstream>
 #include <string>
 #include <vector>
-#include <tf2/LinearMath/Quaternion.h>
-#include <tf2/LinearMath/Matrix3x3.h>
+#include <tf/LinearMath/Quaternion.h>
+#include <tf/LinearMath/Matrix3x3.h>
+#include <ros/ros.h>
 #include "super_odometry/utils/Twist.h"
 #include <queue>
-#include <sensor_msgs/msg/point_cloud2.hpp>
+#include <sensor_msgs/PointCloud2.h>
 #include "super_odometry/sensor_data/pointcloud/point_os.h"
-
 
 namespace super_odometry {
 namespace utils {
 
-
 class ScopedTimer {
 public:
-    explicit ScopedTimer(const std::string& name, rclcpp::Logger logger = rclcpp::get_logger("ScopedTimer"))
+    explicit ScopedTimer(const std::string& name)
         : name_(name), 
-          start_(std::chrono::high_resolution_clock::now()),
-          logger_(logger) {}
+          start_(std::chrono::high_resolution_clock::now()) {}
 
     ~ScopedTimer() {
         auto end = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start_).count();
-        RCLCPP_DEBUG(logger_, "%s took %ld ms", name_.c_str(), duration);
+        ROS_DEBUG("%s took %ld ms", name_.c_str(), duration);
     }
 
 private:
     std::string name_;
     std::chrono::time_point<std::chrono::high_resolution_clock> start_;
-    rclcpp::Logger logger_;
 };
-
 
 struct OdometryData {
     double timestamp;
@@ -64,12 +60,9 @@ inline void transformUpdate(const Eigen::Quaterniond &q_w_curr, const Eigen::Vec
     t_wmap_wodom = t_w_curr - q_wmap_wodom * t_wodom_curr;
 }
 
-
 bool readPointCloud(const std::string &file_path, pcl::PointCloud<PointType>::Ptr cloud_out);
 
-
 bool readLocalizationPose(const std::string &file_path, std::vector<OdometryData> &odometry_results);
-
 
 bool saveLocalizationPose(double timestamp, const Transformd &T_w_lidar, 
                          const std::string &file_path, std::vector<OdometryData> &odometry_results);
@@ -106,12 +99,11 @@ void pointAssociateTobeMapped(PointType const *const pi, PointType *const po,
                             const Eigen::Quaterniond& q_w_curr,
                             const Eigen::Vector3d& t_w_curr);
 
-tf2::Quaternion extractRollPitch(Eigen::Quaterniond& imu_rotation);
+tf::Quaternion extractRollPitch(Eigen::Quaterniond& imu_rotation);
 
 void printTransform(const Transformd& T, const std::string& name);
 
 void transformOusterPoints(point_os::OusterPointXYZIRT const *const pi, point_os::PointcloudXYZITR *const po, Transformd &transform);
-
 
 template<typename T>
 inline constexpr T Deg2Rad(const T &deg) { return deg / 180. * M_PI; }

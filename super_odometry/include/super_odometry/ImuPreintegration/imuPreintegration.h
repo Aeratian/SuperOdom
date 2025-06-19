@@ -5,16 +5,13 @@
 #ifndef IMUPREINTEGRATION_H
 #define IMUPREINTEGRATION_H
 
-#include "rclcpp/rclcpp.hpp"
-#include <sensor_msgs/msg/imu.hpp>
-#include <sensor_msgs/msg/point_cloud2.hpp>
-#include <nav_msgs/msg/odometry.hpp>
-#include <tf2/LinearMath/Quaternion.h>
-#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
-#include <tf2_ros/transform_broadcaster.h>
-
-
-#include "utility.h"
+#include "ros/ros.h"
+#include <sensor_msgs/Imu.h>
+#include <sensor_msgs/PointCloud2.h>
+#include <nav_msgs/Odometry.h>
+#include <std_msgs/Bool.h>
+#include <tf/LinearMath/Quaternion.h>
+#include <tf/transform_broadcaster.h>
 #include <gtsam/geometry/Pose3.h>
 #include <gtsam/geometry/Rot3.h>
 #include <gtsam/inference/Symbol.h>
@@ -36,7 +33,6 @@
 #include "super_odometry/tic_toc.h"
 #include <glog/logging.h>
 #include "super_odometry/sensor_data/imu/imu_data.h"
-
 
 namespace super_odometry {
 
@@ -61,10 +57,9 @@ namespace super_odometry {
         double imu_acc_z_limit;
     };
 
-    class imuPreintegration : public rclcpp::Node {
+    class imuPreintegration {
     public:
-
-        imuPreintegration(const rclcpp::NodeOptions & options);
+        imuPreintegration(ros::NodeHandle& nh);
 
         static constexpr double delta_t = 0;
         static constexpr double imu_laser_timedelay= 0.8;
@@ -74,9 +69,9 @@ namespace super_odometry {
 
         bool readParameters();
 
-        void laserodometryHandler(const nav_msgs::msg::Odometry::SharedPtr odomMsg);
+        void laserodometryHandler(const nav_msgs::Odometry::ConstPtr& odomMsg);
 
-        void imuHandler(const sensor_msgs::msg::Imu::SharedPtr imu_raw);
+        void imuHandler(const sensor_msgs::Imu::ConstPtr& imu_raw);
 
         void initial_system(double currentCorrectionTime, gtsam::Pose3 lidarPose);
 
@@ -89,7 +84,7 @@ namespace super_odometry {
         bool failureDetection(const gtsam::Vector3 &velCur,
                          const gtsam::imuBias::ConstantBias &biasCur);
 
-        void obtainCurrodometry(nav_msgs::msg::Odometry::SharedPtr &odomMsg, double &currentCorrectionTime,
+        void obtainCurrodometry(nav_msgs::Odometry::Ptr &odomMsg, double &currentCorrectionTime,
                            gtsam::Pose3 &lidarPose,
                            int &currentResetId);
 
@@ -101,48 +96,43 @@ namespace super_odometry {
 
         void resetParams();
 
-        bool handleIMUInitialization(const sensor_msgs::msg::Imu::SharedPtr&imu_raw, 
-        sensor_msgs::msg::Imu& thisImu);
+        bool handleIMUInitialization(const sensor_msgs::Imu::ConstPtr& imu_raw, 
+        sensor_msgs::Imu& thisImu);
 
+        void updateAndPublishPath(nav_msgs::Odometry &odometry, const sensor_msgs::Imu& thisImu);
 
-        void updateAndPublishPath(nav_msgs::msg::Odometry &odometry, const sensor_msgs::msg::Imu& thisImu);
+        void publishTransform(nav_msgs::Odometry &odometry, const sensor_msgs::Imu& thisImu);
 
-        void publishTransform(nav_msgs::msg::Odometry &odometry, const sensor_msgs::msg::Imu& thisImu);
+        void prepareOdometryMessage(nav_msgs::Odometry &odometry, const sensor_msgs::Imu& thisImu, const gtsam::NavState &currentState);
 
-        void prepareOdometryMessage(nav_msgs::msg::Odometry &odometry, const sensor_msgs::msg::Imu& thisImu, const gtsam::NavState &currentState);
+        void publishOdometry(const sensor_msgs::Imu& thisImu, const gtsam::NavState& currentState, nav_msgs::Odometry &odometry);
 
-        void publishOdometry(const sensor_msgs::msg::Imu& thisImu, const gtsam::NavState& currentState, nav_msgs::msg::Odometry &odometry);
+        void publishTransformsAndPath(nav_msgs::Odometry &odometry, const sensor_msgs::Imu& thisImu);
 
-        void publishTransformsAndPath(nav_msgs::msg::Odometry &odometry, const sensor_msgs::msg::Imu& thisImu);
+        void processTiming(const sensor_msgs::Imu& thisImu);
 
-        void processTiming(const sensor_msgs::msg::Imu& thisImu);
+        void initializeImu(const sensor_msgs::Imu::ConstPtr& imu_raw);
 
-        void initializeImu(const sensor_msgs::msg::Imu::SharedPtr& imu_raw);
+        void correctLivoxGravity(sensor_msgs::Imu& thisImu);
 
-        void correctLivoxGravity(sensor_msgs::msg::Imu& thisImu);
-
-
-        sensor_msgs::msg::Imu
-        imuConverter(const sensor_msgs::msg::Imu &imu_in);
+        sensor_msgs::Imu imuConverter(const sensor_msgs::Imu &imu_in);
 
         template<typename T>
         double secs(T msg) {
-            return msg->header.stamp.sec + msg->header.stamp.nanosec*1e-9;
+            return msg->header.stamp.toSec();
         }
 
-
     private:
-
-        rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr subImu;
-        rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr subLaserOdometry;
+        ros::NodeHandle nh_;
+        ros::Subscriber subImu;
+        ros::Subscriber subLaserOdometry;
         
+        ros::Publisher pubImuOdometry;
+        ros::Publisher pubHealthStatus;
+        ros::Publisher pubImuPath;
 
-        rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pubImuOdometry;
-        rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr pubHealthStatus;
-        rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr pubImuPath;
+        tf::TransformBroadcaster tfBroadcaster;
 
-
-        rclcpp::CallbackGroup::SharedPtr cb_group_;
     public:
         gtsam::noiseModel::Diagonal::shared_ptr priorPoseNoise;
         gtsam::noiseModel::Diagonal::shared_ptr priorVelNoise;
@@ -163,7 +153,6 @@ namespace super_odometry {
         gtsam::Pose3 lidarodom_w_pre;
         gtsam::Pose3 lidarodom_w_cur;
 
-
     public:
         //Modify the extrinsic matrxi between laser and imu, laser and camera
         gtsam::Pose3 imu2cam;
@@ -173,9 +162,9 @@ namespace super_odometry {
 
     public:
         MapRingBuffer<Imu::Ptr> imuBuf;
-        std::deque<sensor_msgs::msg::Imu> imuQueOpt;
-        std::deque<sensor_msgs::msg::Imu> imuQueImu;
-        MapRingBuffer<nav_msgs::msg::Odometry::SharedPtr> lidarOdomBuf;
+        std::deque<sensor_msgs::Imu> imuQueOpt;
+        std::deque<sensor_msgs::Imu> imuQueImu;
+        MapRingBuffer<nav_msgs::Odometry::Ptr> lidarOdomBuf;
         std::mutex mBuf;
         Imu::Ptr imu_Init = std::make_shared<Imu>();
 
@@ -185,7 +174,6 @@ namespace super_odometry {
         bool health_status = true;
         bool imu_init_success = false;
 
-       
         Eigen::Quaterniond firstImu;
         Eigen::Vector3d gyr_pre;
 
@@ -198,14 +186,14 @@ namespace super_odometry {
         int frame_count = 0;
 
         enum IMU_STATE : uint8_t {
-        FAIL=0,    //lose imu information 
-        SUCCESS=1, //Obtain the good imu data 
-        UNKNOW=2
+            FAIL=0,    //lose imu information 
+            SUCCESS=1, //Obtain the good imu data 
+            UNKNOW=2
         };  
 
         IMU_STATE RESULT;
-        nav_msgs::msg::Odometry::SharedPtr cur_frame = nullptr;
-        nav_msgs::msg::Odometry::SharedPtr last_frame = nullptr;
+        nav_msgs::Odometry::Ptr cur_frame = nullptr;
+        nav_msgs::Odometry::Ptr last_frame = nullptr;
         imuPreintegration_config config_;
     };
 

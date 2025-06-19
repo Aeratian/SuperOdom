@@ -11,7 +11,7 @@
 #include <Eigen/Core>
 #include <super_odometry/utils/EigenTypes.h>
 #include <pcl/point_types.h>
-#include <sensor_msgs/msg/point_cloud2.hpp>
+#include <sensor_msgs/PointCloud2.h>
 
 ////////////////////////////////////////////////////////////////////////////
 // Forward Declarations / typedefs

@@ -1,4 +1,3 @@
-
 // LOCAL
 #include "super_odometry/LidarProcess/LidarSlam.h"
 
@@ -17,14 +16,14 @@ namespace super_odometry {
         WorldEdgesPoints.reset(new PointCloud());
         WorldPlanarsPoints.reset(new PointCloud());
     }
-    void LidarSLAM::initROSInterface(rclcpp::Node::SharedPtr node) {
-        node_ = node;
-        pubUncertaintyX=node_->create_publisher<std_msgs::msg::Float32>(ProjectName+"uncertainty_X", 1);
-        pubUncertaintyY=node_->create_publisher<std_msgs::msg::Float32>(ProjectName+"uncertainty_Y", 1);
-        pubUncertaintyZ=node_->create_publisher<std_msgs::msg::Float32>(ProjectName+"uncertainty_Z", 1);
-        pubUncertaintyRoll=node_->create_publisher<std_msgs::msg::Float32>(ProjectName+"uncertainty_roll", 1);
-        pubUncertaintyPitch=node_->create_publisher<std_msgs::msg::Float32>(ProjectName+"uncertainty_pitch", 1);
-        pubUncertaintyYaw=node_->create_publisher<std_msgs::msg::Float32>(ProjectName+"uncertainty_yaw", 1);
+    void LidarSLAM::initROSInterface(ros::NodeHandle& node) {
+        node_ = &node;
+        pubUncertaintyX = node.advertise<std_msgs::Float32>(ProjectName+"uncertainty_X", 1);
+        pubUncertaintyY = node.advertise<std_msgs::Float32>(ProjectName+"uncertainty_Y", 1);
+        pubUncertaintyZ = node.advertise<std_msgs::Float32>(ProjectName+"uncertainty_Z", 1);
+        pubUncertaintyRoll = node.advertise<std_msgs::Float32>(ProjectName+"uncertainty_Roll", 1);
+        pubUncertaintyPitch = node.advertise<std_msgs::Float32>(ProjectName+"uncertainty_Pitch", 1);
+        pubUncertaintyYaw = node.advertise<std_msgs::Float32>(ProjectName+"uncertainty_Yaw", 1);
     }
 
     void LidarSLAM::Localization(
@@ -50,7 +49,7 @@ namespace super_odometry {
        }
     }
      
-    void LidarSLAM::initializeState(bool initialization, const Transformd&position){
+    void LidarSLAM::initializeState(bool /*initialization*/, const Transformd&position){
         T_w_lidar=position;
         T_w_initial_guess=position;
         last_T_w_lidar=T_w_lidar;
@@ -111,7 +110,7 @@ namespace super_odometry {
 
         //Check if we have enough features for optimization 
         if(!hasEnoughFeatures()){
-            RCLCPP_WARN(node_->get_logger(), "Not enough features for optimization");
+            ROS_WARN("Not enough features for optimization");
             return;
         }
         //Perform ICP iteration 
@@ -120,7 +119,7 @@ namespace super_odometry {
         //Extract features 
         int edge_num=0; int planner_num=0;
         ResetDistanceParameters();
-        super_odometry_msgs::msg::IterationStats iter_stats;
+        super_odometry_msgs::IterationStats iter_stats;
 
         tbb::concurrent_vector<OptimizationParameter> feature_corres;
         extractFeaturesConstraints(feature_corres, edge_num, planner_num);
@@ -152,7 +151,7 @@ namespace super_odometry {
     }
 
     
-    void LidarSLAM::performPostOptimizationProcessing(double timeLaserOdometry, TicToc &t_opt, super_odometry_msgs::msg::OptimizationStats &stats) {
+    void LidarSLAM::performPostOptimizationProcessing(double timeLaserOdometry, TicToc &t_opt, super_odometry_msgs::OptimizationStats &stats) {
         // Apply manual yaw correction
         MannualYawCorrection();
         
@@ -170,7 +169,7 @@ namespace super_odometry {
         lasttimeLaserOdometry = timeLaserOdometry;
     }
 
-    bool LidarSLAM::checkMotionThresholds(double timeLaserOdometry, super_odometry_msgs::msg::OptimizationStats &stats) {
+    bool LidarSLAM::checkMotionThresholds(double timeLaserOdometry, super_odometry_msgs::OptimizationStats &stats) {
     
         bool acceptResult = true;
         double delta_t = timeLaserOdometry - lasttimeLaserOdometry;
@@ -180,22 +179,21 @@ namespace super_odometry {
             T_w_lidar = last_T_w_lidar;
             startupCount = 5;
             acceptResult = false;
-            RCLCPP_WARN(node_->get_logger(), "large motion detected, ignoring predictor for a while");
+            ROS_WARN("large motion detected, ignoring predictor for a while");
         }
         
         // Check small motion threshold
         if (stats.translation_from_last < 0.02 && stats.rotation_from_last < 0.005) {
             acceptResult = false;
             T_w_lidar = last_T_w_lidar;
-            RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 1000,
-                                "very small motion, not accumulating. %f", stats.translation_from_last);
+            ROS_WARN_THROTTLE(1.0, "very small motion, not accumulating. %f", stats.translation_from_last);
         }
     acceptResult = true;
     return acceptResult;
 }
 
 
-    void LidarSLAM::updateOptimizationStats(TicToc &t_opt, super_odometry_msgs::msg::OptimizationStats &stats){
+    void LidarSLAM::updateOptimizationStats(TicToc &t_opt, super_odometry_msgs::OptimizationStats &stats){
         double time_duration = t_opt.toc();
         stats.time_elapsed = time_duration;
         Transformd total_incremental_T;
@@ -239,7 +237,7 @@ namespace super_odometry {
         return summary;
     }
 
-    void LidarSLAM::recordIterationStats(super_odometry_msgs::msg::IterationStats& iter_stats,
+    void LidarSLAM::recordIterationStats(super_odometry_msgs::IterationStats& iter_stats,
                                         int surf_num, int edge_num, Transformd&previous_T, Transformd&current_T){
         //Record iteration statistics 
         iter_stats.num_surf_from_scan=surf_num;
@@ -316,7 +314,7 @@ namespace super_odometry {
                 features_corres.push_back(constraint);
                 edge_num++;
             }
-        MatchRejectionHistogramLine[constraint.match_result]++;
+            MatchRejectionHistogramLine[constraint.match_result]++;
         }
     }
 
@@ -340,7 +338,6 @@ namespace super_odometry {
             }
             MatchRejectionHistogramPlane[constraint.match_result]++;
         }
-       
     } 
 
     double LidarSLAM::calculateSamplingRate(size_t num_points){
@@ -415,7 +412,11 @@ LidarSLAM::OptimizationParameter LidarSLAM::ComputeLineDistanceParameters(
     // 2. Find neighbors using line-specific search
     std::vector<Point> nearest_pts;
     std::vector<float> nearest_dist;
-    Point query{pFinal.x(), pFinal.y(), pFinal.z()};
+    Point query;
+    query.x = pFinal.x();
+    query.y = pFinal.y();
+    query.z = pFinal.z();
+    query.intensity = 0.0;
     bool found = local_map.nearestKSearchSpecificEdgePoint(
                 query, nearest_pts, nearest_dist, LocalizationLineDistanceNbrNeighbors,
                 static_cast<float>(this->LocalizationLineMaxDistInlier));
@@ -895,11 +896,11 @@ double LidarSLAM::computePlaneQualityMetrics(const std::vector<Point>& nearest_p
     float translation_norm = last_current_T.pos.norm();
 
     double roll, pitch, yaw;
-    tf2::Quaternion orientation(T_w_lidar.rot.x(), T_w_lidar.rot.y(), T_w_lidar.rot.z(),
+    tf::Quaternion orientation(T_w_lidar.rot.x(), T_w_lidar.rot.y(), T_w_lidar.rot.z(),
                                     T_w_lidar.rot.w());
-    tf2::Matrix3x3(orientation).getRPY(roll, pitch, yaw);
+    tf::Matrix3x3(orientation).getRPY(roll, pitch, yaw);
     
-    tf2::Quaternion correct_orientation;
+    tf::Quaternion correct_orientation;
 
    
     double correct_yaw=yaw+translation_norm*OptSet.yaw_ratio*M_PI/180;
@@ -989,29 +990,29 @@ double LidarSLAM::computePlaneQualityMetrics(const std::vector<Point>& nearest_p
         double uncer_roll, double uncer_pitch, double uncer_yaw)
     {
 
-        std_msgs::msg::Float32 uncertainty_x;
+        std_msgs::Float32 uncertainty_x;
         uncertainty_x.data = uncer_x;
-        pubUncertaintyX->publish(uncertainty_x);
+        pubUncertaintyX.publish(uncertainty_x);
 
-        std_msgs::msg::Float32 uncertainty_y;
+        std_msgs::Float32 uncertainty_y;
         uncertainty_y.data = uncer_y;
-        pubUncertaintyY->publish(uncertainty_y);
+        pubUncertaintyY.publish(uncertainty_y);
 
-        std_msgs::msg::Float32 uncertainty_z;
+        std_msgs::Float32 uncertainty_z;
         uncertainty_z.data = uncer_z;
-        pubUncertaintyZ->publish(uncertainty_z);
+        pubUncertaintyZ.publish(uncertainty_z);
 
-        std_msgs::msg::Float32 uncertainty_roll;
+        std_msgs::Float32 uncertainty_roll;
         uncertainty_roll.data = uncer_roll;
-        pubUncertaintyRoll->publish(uncertainty_roll);
+        pubUncertaintyRoll.publish(uncertainty_roll);
 
-        std_msgs::msg::Float32 uncertainty_pitch;
+        std_msgs::Float32 uncertainty_pitch;
         uncertainty_pitch.data = uncer_pitch;
-        pubUncertaintyPitch->publish(uncertainty_pitch);
+        pubUncertaintyPitch.publish(uncertainty_pitch);
 
-        std_msgs::msg::Float32 uncertainty_yaw;
+        std_msgs::Float32 uncertainty_yaw;
         uncertainty_yaw.data = uncer_yaw;
-        pubUncertaintyYaw->publish(uncertainty_yaw);
+        pubUncertaintyYaw.publish(uncertainty_yaw);
 
     };
 

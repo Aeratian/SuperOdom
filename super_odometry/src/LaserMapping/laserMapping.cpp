@@ -10,93 +10,70 @@ Eigen::Map<Eigen::Quaterniond> q_w_curr(parameters+3);
 
 namespace super_odometry {
 
-    laserMapping::laserMapping(const rclcpp::NodeOptions & options)
-    : Node("laser_mapping_node", options) {
-    this->get_logger().set_level(rclcpp::Logger::Level::Debug);
+    laserMapping::laserMapping(ros::NodeHandle& nh) : nh_(nh) {
+        ROS_DEBUG_STREAM("Initializing laser mapping node");
     }
 
     void laserMapping::initInterface() {
-        //! Callback Groups
-        cb_group_ = create_callback_group(rclcpp::CallbackGroupType::Reentrant);
-        rclcpp::SubscriptionOptions sub_options;
-        sub_options.callback_group = cb_group_;
-
-        if(!readGlobalparam(shared_from_this()))
+        if(!readGlobalparam(nh_))
         {
-            RCLCPP_ERROR(this->get_logger(), "[SuperOdometry::laserMapping] Could not read calibration. Exiting...");
-            rclcpp::shutdown();
+            ROS_ERROR("[SuperOdometry::laserMapping] Could not read calibration. Exiting...");
+            ros::shutdown();
         }
 
         if (!readParameters())
         {
-            RCLCPP_ERROR(this->get_logger(), "[SuperOdometry::laserMapping] Could not read parameters. Exiting...");
-            rclcpp::shutdown();
+            ROS_ERROR("[SuperOdometry::laserMapping] Could not read parameters. Exiting...");
+            ros::shutdown();
         }
 
-        if (!readCalibration(shared_from_this()))
+        if (!readCalibration(nh_))
         {
-            RCLCPP_ERROR(this->get_logger(), "[AriseSlam::laserMapping] Could not read parameters. Exiting...");
-            rclcpp::shutdown();
+            ROS_ERROR("[AriseSlam::laserMapping] Could not read parameters. Exiting...");
+            ros::shutdown();
         }
 
-        RCLCPP_INFO(this->get_logger(), "DEBUG VIEW: %d", config_.debug_view_enabled);
-        RCLCPP_INFO(this->get_logger(), "ENABLE OUSTER DATA: %d", config_.enable_ouster_data);
-        RCLCPP_INFO(this->get_logger(), "line resolution %f plane resolution %f vision_laser_time_offset %f",
+        ROS_INFO("DEBUG VIEW: %d", config_.debug_view_enabled);
+        ROS_INFO("ENABLE OUSTER DATA: %d", config_.enable_ouster_data);
+        ROS_INFO("line resolution %f plane resolution %f vision_laser_time_offset %f",
                 config_.lineRes, config_.planeRes, vision_laser_time_offset);
 
         downSizeFilterCorner.setLeafSize(config_.lineRes, config_.lineRes, config_.lineRes);
         downSizeFilterSurf.setLeafSize(config_.planeRes, config_.planeRes, config_.planeRes);
 
+        subLaserFeatureInfo = nh_.subscribe(ProjectName+"/feature_info", 2,
+            &laserMapping::laserFeatureInfoHandler, this);
 
-        subLaserFeatureInfo = this->create_subscription<super_odometry_msgs::msg::LaserFeature>(
-            ProjectName+"/feature_info", 2,
-            std::bind(&laserMapping::laserFeatureInfoHandler, this,
-                        std::placeholders::_1), sub_options);
-                        
-
-        pubLaserCloudSurround = this->create_publisher<sensor_msgs::msg::PointCloud2>(
+        pubLaserCloudSurround = nh_.advertise<sensor_msgs::PointCloud2>(
             ProjectName+"/laser_cloud_surround", 2);
 
-        pubLaserCloudMap = this->create_publisher<sensor_msgs::msg::PointCloud2>(
+        pubLaserCloudMap = nh_.advertise<sensor_msgs::PointCloud2>(
             ProjectName+"/laser_cloud_map", 2);
 
-        pubLaserCloudPrior = this->create_publisher<sensor_msgs::msg::PointCloud2>(
-            ProjectName+"/overall_map", 2);
+        pubLaserCloudPrior = nh_.advertise<sensor_msgs::PointCloud2>(
+            ProjectName+"/groundtruth_map", 2);
 
-        pubLaserCloudFullRes = this->create_publisher<sensor_msgs::msg::PointCloud2>(
+        pubLaserCloudFullRes = nh_.advertise<sensor_msgs::PointCloud2>(
             ProjectName+"/registered_scan", 2);
 
-
-        pubOdomAftMapped = this->create_publisher<nav_msgs::msg::Odometry>(
+        pubOdomAftMapped = nh_.advertise<nav_msgs::Odometry>(
             ProjectName+"/laser_odometry", 1);
 
-        pubLaserOdometryIncremental = this->create_publisher<nav_msgs::msg::Odometry>(
+        pubLaserOdometryIncremental = nh_.advertise<nav_msgs::Odometry>(
             ProjectName+"/aft_mapped_to_init_incremental", 1);
 
-
-        pubVIOPrediction=  this->create_publisher<nav_msgs::msg::Odometry>(
-            ProjectName+"/vio_prediction", 1);
-
-        pubLIOPrediction= this->create_publisher<nav_msgs::msg::Odometry>(
-            ProjectName+"/lio_prediction", 1);
-
-
-        pubLaserAfterMappedPath = this->create_publisher<nav_msgs::msg::Path>(
+        pubLaserAfterMappedPath = nh_.advertise<nav_msgs::Path>(
             ProjectName+"/laser_odom_path", 1);
 
-        pubOptimizationStats = this->create_publisher<super_odometry_msgs::msg::OptimizationStats>(
+        pubOptimizationStats = nh_.advertise<super_odometry_msgs::OptimizationStats>(
             ProjectName+"/super_odometry_stats", 1);
 
-  
-
-        pubprediction_source = this->create_publisher<std_msgs::msg::String>(
+        pubprediction_source = nh_.advertise<std_msgs::String>(
             ProjectName+"/prediction_source", 1);
 
-        process_timer_ = this->create_wall_timer(
-            std::chrono::milliseconds(static_cast<int>(100.)),
-            std::bind(&laserMapping::process, this));
+        process_timer_ = nh_.createTimer(ros::Duration(0.2), [this](const ros::TimerEvent&){ this->process(); });
 
-        slam.initROSInterface(shared_from_this());
+        slam.initROSInterface(nh_);
         slam.localMap.lineRes_ = config_.lineRes;
         slam.localMap.planeRes_ = config_.planeRes;
         slam.Visual_confidence_factor=config_.visual_confidence_factor;
@@ -117,10 +94,9 @@ namespace super_odometry {
         slam.init_yaw=config_.init_yaw;
 
         prediction_source = PredictionSource::IMU_ORIENTATION;
-        timeLatestImuOdometry = rclcpp::Time(0,0,RCL_ROS_TIME);
+        timeLatestImuOdometry = ros::Time(0);
 
         initializationParam();
-
     }
 
     void laserMapping::initializationParam() {
@@ -158,64 +134,44 @@ namespace super_odometry {
         slam.localMap.setOrigin(Eigen::Vector3d(slam.init_x, slam.init_y, slam.init_z));
 
         if (slam.localization_mode) {
-            RCLCPP_INFO(this->get_logger(), "\033[1;32m Loading GT Map now.... Please wait for 10 sec before running rosbag.\033[0m");
+            ROS_INFO("\033[1;32m Loading GT Map now.... Please wait for 10 sec before running rosbag.\033[0m");
             if(utils::readPointCloud(config_.map_dir, laserCloudPrior)) {
                 slam.localMap.addSurfPointCloud(*laserCloudPrior);
                 pcl::toROSMsg(*laserCloudPrior, priorCloudMsg);
                 priorCloudMsg.header.frame_id = WORLD_FRAME;
-                RCLCPP_INFO(this->get_logger(), "\033[1;32m Loading GT Map Succesfully. Localization mode is Ready.\033[0m");
+                ROS_INFO("\033[1;32m Loading GT Map Succesfully. Localization mode is Ready.\033[0m");
             } else {
                 slam.localization_mode = false;
-                RCLCPP_INFO(this->get_logger(), "\033[1;32mCannot read map file, switch to mapping mode.\033[0m");
+                ROS_INFO("\033[1;32mCannot read map file, switch to mapping mode.\033[0m");
             }
         } else {
-            RCLCPP_INFO(this->get_logger(), "\033[1;32mStart SLAM in mapping mode.\033[0m");
+            ROS_INFO("\033[1;32mStart SLAM in mapping mode.\033[0m");
         }
     }
 
     bool laserMapping::readParameters()
     {
-        // Declare with default values
-        this->declare_parameter("laser_mapping_node.mapping_line_resolution", 0.1);
-        this->declare_parameter("laser_mapping_node.mapping_plane_resolution", 0.2);
-        this->declare_parameter("laser_mapping_node.max_iterations", 4);
-        this->declare_parameter("laser_mapping_node.debug_view", false);
-        this->declare_parameter("laser_mapping_node.enable_ouster_data", false);
-        this->declare_parameter("laser_mapping_node.publish_only_feature_points", false);
-        this->declare_parameter("laser_mapping_node.use_imu_roll_pitch", false);
-        this->declare_parameter("laser_mapping_node.max_surface_features", 2000);
-        this->declare_parameter("laser_mapping_node.velocity_failure_threshold", 30.0);
-        this->declare_parameter("laser_mapping_node.auto_voxel_size", true);
-        this->declare_parameter("laser_mapping_node.forget_far_chunks", false);
-        this->declare_parameter("laser_mapping_node.visual_confidence_factor", 1.0);
-        this->declare_parameter("laser_mapping_node.localization_mode", false); // Add default value!
-        this->declare_parameter("laser_mapping_node.read_pose_file", false);
-        this->declare_parameter("laser_mapping_node.init_x", 0.0);
-        this->declare_parameter("laser_mapping_node.init_y", 0.0);
-        this->declare_parameter("laser_mapping_node.init_z", 0.0);
-        this->declare_parameter("laser_mapping_node.init_roll", 0.0);
-        this->declare_parameter("laser_mapping_node.init_pitch", 0.0);
-        this->declare_parameter("laser_mapping_node.init_yaw", 0.0);
-        this->declare_parameter("map_dir", "pointcloud_local.pcd");
-
-
-        // Get parameters
-        config_.lineRes = this->get_parameter("laser_mapping_node.mapping_line_resolution").as_double();
-        config_.planeRes = this->get_parameter("laser_mapping_node.mapping_plane_resolution").as_double();
-        config_.max_iterations = this->get_parameter("laser_mapping_node.max_iterations").as_int();
-        config_.debug_view_enabled = this->get_parameter("laser_mapping_node.debug_view").as_bool();
-        config_.enable_ouster_data = this->get_parameter("laser_mapping_node.enable_ouster_data").as_bool();
-        config_.publish_only_feature_points = this->get_parameter("laser_mapping_node.publish_only_feature_points").as_bool();
-        // config_.use_imu_roll_pitch = this->get_parameter("laser_mapping_node.use_imu_roll_pitch").as_bool();
-        config_.max_surface_features = this->get_parameter("laser_mapping_node.max_surface_features").as_int();
-        config_.velocity_failure_threshold = this->get_parameter("laser_mapping_node.velocity_failure_threshold").as_double();
-        config_.auto_voxel_size = this->get_parameter("laser_mapping_node.auto_voxel_size").as_bool();
-        config_.forget_far_chunks = this->get_parameter("laser_mapping_node.forget_far_chunks").as_bool();
-        config_.visual_confidence_factor = this->get_parameter("laser_mapping_node.visual_confidence_factor").as_double();
-        config_.map_dir = this->get_parameter("map_dir").as_string(); 
-        config_.localization_mode = this->get_parameter("laser_mapping_node.localization_mode").as_bool();
-        config_.read_pose_file = this->get_parameter("laser_mapping_node.read_pose_file").as_bool();
-        config_.use_imu_roll_pitch = USE_IMU_ROLL_PITCH;
+        nh_.param("laser_mapping_node/mapping_line_resolution", config_.lineRes, 0.1f);
+        nh_.param("laser_mapping_node/mapping_plane_resolution", config_.planeRes, 0.2f);
+        nh_.param("laser_mapping_node/max_iterations", config_.max_iterations, 4);
+        nh_.param("laser_mapping_node/debug_view", config_.debug_view_enabled, false);
+        nh_.param("laser_mapping_node/enable_ouster_data", config_.enable_ouster_data, false);
+        nh_.param("laser_mapping_node/publish_only_feature_points", config_.publish_only_feature_points, false);
+        nh_.param("laser_mapping_node/use_imu_roll_pitch", config_.use_imu_roll_pitch, false);
+        nh_.param("laser_mapping_node/max_surface_features", config_.max_surface_features, 2000);
+        nh_.param("laser_mapping_node/velocity_failure_threshold", config_.velocity_failure_threshold, 30.0);
+        nh_.param("laser_mapping_node/auto_voxel_size", config_.auto_voxel_size, true);
+        nh_.param("laser_mapping_node/forget_far_chunks", config_.forget_far_chunks, false);
+        nh_.param("laser_mapping_node/visual_confidence_factor", config_.visual_confidence_factor, 1.0f);
+        nh_.param("laser_mapping_node/localization_mode", config_.localization_mode, false);
+        nh_.param("laser_mapping_node/read_pose_file", config_.read_pose_file, 0.0f);
+        nh_.param("laser_mapping_node/init_x", config_.init_x, 0.0f);
+        nh_.param("laser_mapping_node/init_y", config_.init_y, 0.0f);
+        nh_.param("laser_mapping_node/init_z", config_.init_z, 0.0f);
+        nh_.param("laser_mapping_node/init_roll", config_.init_roll, 0.0f);
+        nh_.param("laser_mapping_node/init_pitch", config_.init_pitch, 0.0f);
+        nh_.param("laser_mapping_node/init_yaw", config_.init_yaw, 0.0f);
+        nh_.param("map_dir", config_.map_dir, std::string("pointcloud_local.pcd"));
 
         if(config_.read_pose_file)
         {   
@@ -228,24 +184,17 @@ namespace super_odometry {
             config_.init_pitch= odometryResults[0].pitch;
             config_.init_yaw= odometryResults[0].yaw;
         }
-        else
-        {  
-            config_.init_x = get_parameter("laser_mapping_node.init_x").as_double(); 
-            config_.init_y = get_parameter("laser_mapping_node.init_y").as_double(); 
-            config_.init_z = get_parameter("laser_mapping_node.init_z").as_double(); 
-            config_.init_roll = get_parameter("laser_mapping_node.init_roll").as_double();
-            config_.init_pitch = get_parameter("laser_mapping_node.init_pitch").as_double();
-            config_.init_yaw = get_parameter("laser_mapping_node.init_yaw").as_double(); 
-        }
+
+        config_.use_imu_roll_pitch = USE_IMU_ROLL_PITCH;
 
         return true;
     }
     
    
 
-    void laserMapping::laserFeatureInfoHandler(const super_odometry_msgs::msg::LaserFeature::SharedPtr msgIn) {
-       
+    void laserMapping::laserFeatureInfoHandler(const super_odometry_msgs::LaserFeature::ConstPtr& msgIn) {
         mBuf.lock();
+   
         cornerLastBuf.push(msgIn->cloud_corner);
         surfLastBuf.push(msgIn->cloud_surface);
         realsenseBuf.push(msgIn->cloud_realsense);
@@ -280,7 +229,7 @@ void laserMapping::initializeFirstFrame(){
     //Get initial orientation from IMU prediction 
     if(sensorMeas.imuPrediction.w()!=0){   //Have IMU data
         //Extract roll and pitch, zero out yaw 
-        tf2::Quaternion initial_orientation=utils::extractRollPitch(sensorMeas.imuPrediction);
+        tf::Quaternion initial_orientation=utils::extractRollPitch(sensorMeas.imuPrediction);
         q_w_curr=Eigen::Quaterniond(initial_orientation.w(), initial_orientation.x(),
               initial_orientation.y(), initial_orientation.z());
         auto q_extrinsic=Eigen::Quaterniond(imu_laser_R);
@@ -302,7 +251,7 @@ void laserMapping::initializeFirstFrame(){
     //Overide with predefined pose if localization mode 
     if(slam.localization_mode){
         T_w_lidar.pos=Eigen::Vector3d(slam.init_x,slam.init_y,slam.init_z);
-        tf2::Quaternion localization_pose;
+        tf::Quaternion localization_pose;
         localization_pose.setRPY(slam.init_roll, slam.init_pitch,slam.init_yaw);
         T_w_lidar.rot=Eigen::Quaterniond(localization_pose.w(), localization_pose.x(),
                                         localization_pose.y(), localization_pose.z());
@@ -314,7 +263,7 @@ void laserMapping::initializeFirstFrame(){
 void laserMapping::initializeWithIMU(){
     if(sensorMeas.imuPrediction.w()!=0){  //Have IMU data
     //Use IMU Orientation directly during startup for seconds 
-    tf2::Quaternion curr_imu(sensorMeas.imuPrediction.w(), sensorMeas.imuPrediction.x(),
+    tf::Quaternion curr_imu(sensorMeas.imuPrediction.w(), sensorMeas.imuPrediction.x(),
                              sensorMeas.imuPrediction.y(), sensorMeas.imuPrediction.z());
     
     //Keep position from last frame 
@@ -340,6 +289,7 @@ void laserMapping::selectPosePrediction(){
 
 // Step1: Decide prediction source based on system state 
 prediction_source=determinePredictionSource();
+ROS_INFO("[TartanAir] prediction_source: %d", static_cast<int>(prediction_source));
 
 //Step2: Get prediction from selected source 
 switch(prediction_source){
@@ -365,7 +315,8 @@ switch(prediction_source){
     break;
     } 
    
-    case PredictionSource::CONSTANT_VELOCITY:{  
+    case PredictionSource::CONSTANT_VELOCITY:{ 
+    ROS_INFO("[TartanAir] run constannt velocity prediction");
     Transformd relative_pose=last_T_w_lidar.inverse()*T_w_lidar;
     T_w_lidar=T_w_lidar*relative_pose;
     break; 
@@ -382,6 +333,7 @@ laserMapping::PredictionSource laserMapping::determinePredictionSource(){
 // If system is degerenate, prefer VIO or learning imu odom
 
 if(slam.isDegenerate){
+    ROS_INFO("[TartanAir] isDegenerate");
     if(sensorMeas.vio_prediction_status){
         return PredictionSource::VIO_ODOM;
     }
@@ -391,12 +343,17 @@ if(slam.isDegenerate){
 
 }else{
     // If system is not degenerate, use IMU orientation 
+    ROS_INFO("[TartanAir] is not degenerate");
     if(sensorMeas.lio_prediction_status){
         return PredictionSource::LIO_ODOM;
     }
     sensorMeas.imu_orientation_status=useIMUPrediction(sensorMeas.imuPrediction);
+    ROS_INFO("[TartanAir] sensorMeas.imu_orientation_status: %d", sensorMeas.imu_orientation_status);
     if(sensorMeas.imu_orientation_status){
         return PredictionSource::IMU_ORIENTATION;
+    }else{
+      ROS_ERROR("No IMU data,run constant velocity prediction");
+      return PredictionSource::CONSTANT_VELOCITY;
     }
    
 }
@@ -408,10 +365,9 @@ return PredictionSource::CONSTANT_VELOCITY;
 
 }
 
-    void laserMapping::publishTopic(){
-
+    void laserMapping::publishTopic() {
         TicToc t_pub;
-        std_msgs::msg::String prediction_source_msg;
+        std_msgs::String prediction_source_msg;
         switch (prediction_source) {
             case PredictionSource::IMU_ORIENTATION :
                 prediction_source_msg.data = "IMU Only Orientation Prediction";
@@ -429,31 +385,30 @@ return PredictionSource::CONSTANT_VELOCITY;
                 prediction_source_msg.data = "Using Constant Velocity Prediction";
                 break;
         }
-        pubprediction_source->publish(prediction_source_msg);
+        pubprediction_source.publish(prediction_source_msg);
 
         if (frameCount % 5 == 0 && config_.debug_view_enabled) {
             laserCloudSurround->clear();
             *laserCloudSurround = slam.localMap.get5x5LocalMap(slam.pos_in_localmap);
-            sensor_msgs::msg::PointCloud2 laserCloudSurround3;
+            sensor_msgs::PointCloud2 laserCloudSurround3;
             pcl::toROSMsg(*laserCloudSurround, laserCloudSurround3);
-            laserCloudSurround3.header.stamp =
-                    rclcpp::Time(timeLaserOdometry*1e9);
+            laserCloudSurround3.header.stamp = ros::Time(timeLaserOdometry);
             laserCloudSurround3.header.frame_id = WORLD_FRAME;
-            pubLaserCloudSurround->publish(laserCloudSurround3);
+            pubLaserCloudSurround.publish(laserCloudSurround3);
         }
 
         if (frameCount % 20 == 0) {
             pcl::PointCloud<PointType> laserCloudMap;
             laserCloudMap = slam.localMap.getAllLocalMap();
-            sensor_msgs::msg::PointCloud2 laserCloudMsg;
+            sensor_msgs::PointCloud2 laserCloudMsg;
             pcl::toROSMsg(laserCloudMap, laserCloudMsg);
-            laserCloudMsg.header.stamp = rclcpp::Time(timeLaserOdometry*1e9);
+            laserCloudMsg.header.stamp = ros::Time(timeLaserOdometry);
             laserCloudMsg.header.frame_id = WORLD_FRAME;
-            pubLaserCloudMap->publish(laserCloudMsg);
+            pubLaserCloudMap.publish(laserCloudMsg);
             
             if (slam.localization_mode) {
-                priorCloudMsg.header.stamp = rclcpp::Time(timeLaserOdometry*1e9);
-                pubLaserCloudPrior->publish(priorCloudMsg);
+                priorCloudMsg.header.stamp = ros::Time(timeLaserOdometry);
+                pubLaserCloudPrior.publish(priorCloudMsg);
             }
         }
 
@@ -472,7 +427,7 @@ return PredictionSource::CONSTANT_VELOCITY;
         }
 
         pcl::PointCloud<pcl::PointXYZI> laserCloudFullResCvt, laserCloudFullResClean;
-        sensor_msgs::msg::PointCloud2 laserCloudFullRes3;
+        sensor_msgs::PointCloud2 laserCloudFullRes3;
         pcl::toROSMsg(*laserCloudFullRes, laserCloudFullRes3);
         pcl::fromROSMsg(laserCloudFullRes3, laserCloudFullResCvt);
         for (int i = 0; i < laserCloudFullResNum; i++) {
@@ -483,9 +438,9 @@ return PredictionSource::CONSTANT_VELOCITY;
           }
         }
         pcl::toROSMsg(laserCloudFullResClean, laserCloudFullRes3);
-        laserCloudFullRes3.header.stamp = rclcpp::Time(timeLaserOdometry*1e9);
+        laserCloudFullRes3.header.stamp = ros::Time(timeLaserOdometry);
         laserCloudFullRes3.header.frame_id = WORLD_FRAME;
-        pubLaserCloudFullRes->publish(laserCloudFullRes3);
+        pubLaserCloudFullRes.publish(laserCloudFullRes3);
 
         laserCloudFullResCvt.clear();
         laserCloudFullResClean.clear();
@@ -499,10 +454,10 @@ return PredictionSource::CONSTANT_VELOCITY;
             laserCloudFullRes_rot->points[i].intensity = laserCloudFullRes->points[i].intensity;
         }
 
-        nav_msgs::msg::Odometry odomAftMapped;
+        nav_msgs::Odometry odomAftMapped;
         odomAftMapped.header.frame_id = WORLD_FRAME;
         odomAftMapped.child_frame_id = SENSOR_FRAME;
-        odomAftMapped.header.stamp = rclcpp::Time(timeLaserOdometry*1e9);
+        odomAftMapped.header.stamp = ros::Time(timeLaserOdometry);
 
         odomAftMapped.pose.pose.orientation.x = q_w_curr.x();
         odomAftMapped.pose.pose.orientation.y = q_w_curr.y();
@@ -513,11 +468,11 @@ return PredictionSource::CONSTANT_VELOCITY;
         odomAftMapped.pose.pose.position.y = t_w_curr.y();
         odomAftMapped.pose.pose.position.z = t_w_curr.z();
 
-        nav_msgs::msg::Odometry laserOdomIncremental;
+        nav_msgs::Odometry laserOdomIncremental;
 
         if (initialization == false)
         {
-            laserOdomIncremental.header.stamp = rclcpp::Time(timeLaserOdometry*1e9);
+            laserOdomIncremental.header.stamp = ros::Time(timeLaserOdometry);
             laserOdomIncremental.header.frame_id = WORLD_FRAME;
             laserOdomIncremental.child_frame_id =  SENSOR_FRAME;
             laserOdomIncremental.pose.pose.position.x = t_w_curr.x();
@@ -534,7 +489,7 @@ return PredictionSource::CONSTANT_VELOCITY;
             laser_incremental_T = T_w_lidar;
             laser_incremental_T.rot.normalized();
 
-            laserOdomIncremental.header.stamp = rclcpp::Time(timeLaserOdometry*1e9);
+            laserOdomIncremental.header.stamp = ros::Time(timeLaserOdometry);
             laserOdomIncremental.header.frame_id = WORLD_FRAME;
             laserOdomIncremental.child_frame_id =  SENSOR_FRAME;
             laserOdomIncremental.pose.pose.position.x = laser_incremental_T.pos.x();
@@ -546,7 +501,7 @@ return PredictionSource::CONSTANT_VELOCITY;
             laserOdomIncremental.pose.pose.orientation.w = laser_incremental_T.rot.w();
         }
 
-        pubLaserOdometryIncremental->publish(laserOdomIncremental);
+        pubLaserOdometryIncremental.publish(laserOdomIncremental);
 
 
         if (slam.isDegenerate) {
@@ -555,33 +510,32 @@ return PredictionSource::CONSTANT_VELOCITY;
             odomAftMapped.pose.covariance[0] = 0;
         }
 
-        rclcpp::Time pub_time = rclcpp::Clock{RCL_ROS_TIME}.now(); //PARV_TODO - find how to syncrynoise this with rosbag time
-        pubOdomAftMapped->publish(odomAftMapped);
+        pubOdomAftMapped.publish(odomAftMapped);
 
-        geometry_msgs::msg::PoseStamped laserAfterMappedPose;
+        geometry_msgs::PoseStamped laserAfterMappedPose;
         laserAfterMappedPose.header = odomAftMapped.header;
         laserAfterMappedPose.pose = odomAftMapped.pose.pose;
         laserAfterMappedPath.header.stamp = odomAftMapped.header.stamp;
         laserAfterMappedPath.header.frame_id = WORLD_FRAME;
         laserAfterMappedPath.poses.push_back(laserAfterMappedPose);
-        pubLaserAfterMappedPath->publish(laserAfterMappedPath);
+        pubLaserAfterMappedPath.publish(laserAfterMappedPath);
 
 
         slam.stats.header = odomAftMapped.header;
-        if (timeLatestImuOdometry.seconds() < 1.0)
+        if (timeLatestImuOdometry.toSec() < 1.0)
         {
-            timeLatestImuOdometry = pub_time;
+            timeLatestImuOdometry = ros::Time(timeLaserOdometry);
         }
-        rclcpp::Duration latency = timeLatestImuOdometry - pub_time;  
-        slam.stats.latency = latency.seconds() * 1000;
+        ros::Duration latency = ros::Time(timeLaserOdometry) - ros::Time(timeLaserOdometry);  
+        slam.stats.latency = latency.toSec() * 1000;
         slam.stats.n_iterations = slam.stats.iterations.size();
         // Avoid breaking rqt_multiplot
         while (slam.stats.iterations.size() < 4)
         {
-            slam.stats.iterations.push_back(super_odometry_msgs::msg::IterationStats());
+            slam.stats.iterations.push_back(super_odometry_msgs::IterationStats());
         }
 
-        pubOptimizationStats->publish(slam.stats);
+        pubOptimizationStats.publish(slam.stats);
         slam.stats.iterations.clear();
     }
 
@@ -689,14 +643,14 @@ return PredictionSource::CONSTANT_VELOCITY;
 
 
     void laserMapping::performSLAMOptimization(){
-        tf2::Quaternion imu_roll_pitch;
+        tf::Quaternion imu_roll_pitch = utils::extractRollPitch(sensorMeas.imuPrediction);
         if(config_.use_imu_roll_pitch){  // TODO: Livox mid360 not use roll pitch angle
             slam.OptSet.use_imu_roll_pitch=true;
             imu_roll_pitch=utils::extractRollPitch(sensorMeas.imuPrediction);
             slam.OptSet.imu_roll_pitch=imu_roll_pitch;
         }else{
             slam.OptSet.use_imu_roll_pitch=false;
-            slam.OptSet.imu_roll_pitch=tf2::Quaternion(0,0,0,1);
+            slam.OptSet.imu_roll_pitch = tf::Quaternion(0,0,0,1);
         }
 
         slam.Localization(initialization, static_cast<LidarSLAM::PredictionSource>(prediction_source), T_w_lidar,
@@ -737,33 +691,22 @@ return PredictionSource::CONSTANT_VELOCITY;
     }
 
     void laserMapping::process() {
-
-        while (rclcpp::ok()) {
-            if(!checkDataAvailable()){
-                std::this_thread::sleep_for(std::chrono::milliseconds(2));
-                continue;
-            }
-            try{
-                utils::ScopedTimer timer("Frame Processing");
-                mBuf.lock(); 
-                sensorMeas=extractSensorData();
-                clearSensorData();
-                mBuf.unlock();
-                setInitialGuess();
-                adjustVoxelSize();
-                performSLAMOptimization();
-                updatePoseAndPublish();
-               
-                //updateStatsAndDebugInfo();
-
-            }catch(const std::exception&e){
-                RCLCPP_ERROR(this->get_logger(), "Error in frame processing: %s", e.what());
-            }
+        if(!checkDataAvailable()){
+            return;
         }
-
+        try{
+            utils::ScopedTimer timer("Frame Processing");
+            mBuf.lock(); 
+            sensorMeas=extractSensorData();
+            clearSensorData();
+            mBuf.unlock();
+            setInitialGuess();
+            adjustVoxelSize();
+            performSLAMOptimization();
+            updatePoseAndPublish();
+        }catch(const std::exception&e){
+            ROS_ERROR("Error in frame processing: %s", e.what());
+        }
     }
-
-
-#pragma clang diagnostic pop
 
 } // namespace super_odometry

@@ -8,8 +8,6 @@ set(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
 SET(TBB_INCLUDE_DIR "/usr/include/tbb")
 add_compile_options(-Wall -Wextra -Wpedantic -Wunused-parameter)
 
-
-
 # Default to C99
 if(NOT CMAKE_C_STANDARD)
   set(CMAKE_C_STANDARD 99)
@@ -28,33 +26,42 @@ if (POLICY CMP0048)
   cmake_policy(SET CMP0048 NEW)
 endif (POLICY CMP0048)
 
-find_package(ament_cmake REQUIRED)
-find_package(ament_cmake_auto REQUIRED)
-find_package(rclcpp REQUIRED)
-find_package(std_msgs REQUIRED)
-find_package(geometry_msgs REQUIRED)
-find_package(nav_msgs REQUIRED)
-find_package(sensor_msgs REQUIRED)
-find_package(image_transport REQUIRED)
-find_package(cv_bridge REQUIRED)
-find_package(tf2 REQUIRED)
-find_package(tf2_ros REQUIRED)
-find_package(tf2_geometry_msgs REQUIRED)
-find_package(super_odometry_msgs REQUIRED)
-find_package(visualization_msgs REQUIRED)
+find_package(catkin REQUIRED COMPONENTS
+  roscpp
+  std_msgs
+  geometry_msgs
+  nav_msgs
+  sensor_msgs
+  super_odometry_msgs
+  image_transport
+  cv_bridge
+  tf
+  tf2
+  tf2_ros
+  tf2_geometry_msgs
+  visualization_msgs
+  pcl_ros
+  pcl_conversions
+  #livox_ros_driver
+)
 
 find_package(Eigen3 REQUIRED)
 find_package(Sophus REQUIRED)
 find_package(PCL REQUIRED)
-find_package(pcl_conversions REQUIRED)
 find_package(Ceres REQUIRED)
 find_package(GTSAM REQUIRED QUIET)
 find_package(TBB REQUIRED)
-find_package(livox_ros_driver2 REQUIRED)
+
+catkin_package(
+  INCLUDE_DIRS include
+  LIBRARIES SuperOdomLib
+  CATKIN_DEPENDS roscpp std_msgs geometry_msgs nav_msgs sensor_msgs super_odometry_msgs tf tf2_ros
+)
 
 # Include directories
 include_directories(
   include
+  ${catkin_INCLUDE_DIRS}
   ${PCL_INCLUDE_DIRS}
   ${CERES_INCLUDE_DIRS}
   ${OpenCV_INCLUDE_DIRS}
@@ -75,7 +82,6 @@ link_directories(
 
 set(GTSAM_LIBRARIES gtsam)
 
-
 # SuperOdom Library
 add_library(SuperOdomLib SHARED
   src/FeatureExtraction/featureExtraction.cpp
@@ -90,95 +96,60 @@ add_library(SuperOdomLib SHARED
   src/utils/superodom_utils.cpp
 )
 
-# Set up library include directory
-target_include_directories(SuperOdomLib PUBLIC  
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/SuperOdomLib>  
-    $<INSTALL_INTERFACE:include/SuperOdomLib>  # <prefix>/include/mylib
-)
+add_dependencies(SuperOdomLib ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 
-ament_target_dependencies(SuperOdomLib
-  rclcpp
-  std_msgs
-  geometry_msgs
-  nav_msgs 
-  sensor_msgs
-  image_transport
-  cv_bridge
-  tf2
-  tf2_ros
-  tf2_geometry_msgs
-  super_odometry_msgs
-  visualization_msgs
-  pcl_conversions
-  livox_ros_driver2
-)
 target_link_libraries(SuperOdomLib
+  ${catkin_LIBRARIES}
   ${PCL_LIBRARIES}
   ${OpenCV_LIBRARIES}
   gtsam
- ${CERES_LIBRARIES}
+  ${CERES_LIBRARIES}
 )
 
 # IMU PreIntegration node
 add_executable(imu_preintegration_node src/imuPreintegration_node.cpp)
-ament_target_dependencies(imu_preintegration_node rclcpp nav_msgs sensor_msgs tf2_ros)
 target_link_libraries(imu_preintegration_node
+    ${catkin_LIBRARIES}
     gtsam
     SuperOdomLib
 )
 
-
-
 # Feature Extraction node
 add_executable(feature_extraction_node src/featureExtraction_node.cpp)
-ament_target_dependencies(feature_extraction_node rclcpp nav_msgs sensor_msgs super_odometry_msgs livox_ros_driver2)
 target_link_libraries(feature_extraction_node 
+  ${catkin_LIBRARIES}
   ${PCL_LIBRARIES}
   ${TBB_LIBRARIES}
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include>
   SuperOdomLib
 )
 
 # LiDAR Mapping node
 add_executable(laser_mapping_node src/laserMapping_node.cpp)
-ament_target_dependencies(laser_mapping_node rclcpp std_msgs nav_msgs sensor_msgs geometry_msgs tf2 tf2_ros)
 target_link_libraries(laser_mapping_node
+    ${catkin_LIBRARIES}
     ${PCL_LIBRARIES}
     ${CERES_LIBRARIES}
     SuperOdomLib
 )
 
-# Install Exported Libraries
-ament_export_targets(export_super_odometry HAS_LIBRARY_TARGET)
-
-install(
-  DIRECTORY include/
-  DESTINATION include
+# Install targets
+install(TARGETS SuperOdomLib
+  ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
+  LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
+  RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
-install(
-  TARGETS SuperOdomLib
-  EXPORT export_super_odometry
-  LIBRARY DESTINATION lib
-  ARCHIVE DESTINATION lib
-  RUNTIME DESTINATION bin
-  INCLUDES DESTINATION include
-)
-
-ament_export_include_directories(include)
-ament_export_libraries(SuperOdomLib)
-
-#Install executables
 install(TARGETS
   imu_preintegration_node
   feature_extraction_node
   laser_mapping_node
-  DESTINATION lib/${PROJECT_NAME}
+  RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
+
+install(DIRECTORY include/
+  DESTINATION ${CATKIN_PACKAGE_INCLUDE_DESTINATION}
 )
 
 install(DIRECTORY config launch
-        DESTINATION share/${PROJECT_NAME}/
+  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
 )
-
-ament_package()

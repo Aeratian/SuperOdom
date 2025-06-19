@@ -9,7 +9,7 @@
 #include <Eigen/Geometry>
 #include <memory>
 #include "super_odometry/container/MapRingBuffer.h"
-#include <sensor_msgs/msg/imu.hpp>
+#include <sensor_msgs/Imu.h>
 #include "super_odometry/config/parameter.h"
 #include "super_odometry/utils/Twist.h"
 

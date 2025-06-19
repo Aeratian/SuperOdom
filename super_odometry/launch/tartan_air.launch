@@ -1,0 +1,40 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- Launch Arguments -->
+    <arg name="config_file" default="$(find super_odometry)/config/tartan_air.yaml" />
+    <arg name="calibration_file" default="$(find super_odometry)/config/tartan_air/tartan_air_calibration.yaml" />
+    <arg name="odom_topic" default="integrated_to_init" />
+    <arg name="world_frame" default="map" />
+    <arg name="world_frame_rot" default="map_rot" />
+    <arg name="sensor_frame" default="sensor" />
+    <arg name="sensor_frame_rot" default="sensor_rot" />
+    
+    <!-- Global Parameters (loaded once) -->
+    <rosparam file="$(arg config_file)" command="load" />
+    <param name="calibration_file" value="$(arg calibration_file)" />
+    <param name="use_sim_time" value="false" />
+    
+    <!-- Feature Extraction Node -->
+    <node pkg="super_odometry" 
+          type="feature_extraction_node" 
+          name="feature_extraction_node" 
+          output="screen">
+    </node>
+    
+    <!-- Laser Mapping Node -->
+    <node pkg="super_odometry" 
+          type="laser_mapping_node" 
+          name="laser_mapping_node" 
+          output="screen">
+        <!-- Remappings -->
+        <remap from="laser_odom_to_init" to="$(arg odom_topic)" />
+    </node>
+    
+    <!-- IMU Preintegration Node -->
+    <node pkg="super_odometry" 
+          type="imu_preintegration_node" 
+          name="imu_preintegration_node" 
+          output="screen">
+    </node>
+    
+</launch> 

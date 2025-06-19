@@ -1,6 +1,5 @@
 <?xml version="1.0"?>
-<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
-<package format="3">
+<package format="2">
   <name>super_odometry</name>
   <version>0.0.0</version>
 
@@ -15,26 +14,36 @@
 
   <license>BSD</license>
  
-  <buildtool_depend>amend_cmake</buildtool_depend>
+  <buildtool_depend>catkin</buildtool_depend>
 
-  <depend>rclcpp</depend>
-  <depend>rclpy</depend>
+  <depend>roscpp</depend>
+  <depend>tf</depend>
   <depend>tf2</depend>
+  <depend>tf2_ros</depend>
   <depend>std_msgs</depend>
   <depend>nav_msgs</depend>
   <depend>geometry_msgs</depend>
   <depend>sensor_msgs</depend>
-  <depend>super_odometry_msgs</depend>
+  <depend>visualization_msgs</depend>
   <depend>image_transport</depend>
-  <!-- <depend>tf_conversions</depend> -->
-  <depend>pcl_conversion</depend>
+  <depend>cv_bridge</depend>
+  <depend>pcl_ros</depend>
+  <depend>pcl_conversions</depend>
   <depend>sophus</depend>
-  <depend>livox_ros_driver2</depend>
-  
-  <test_depend>ament_lint_auto</test_depend>
-  <test_depend>ament_lint_common</test_depend>
+  <depend>livox_ros_driver</depend>
+  <depend>super_odometry_msgs</depend>
+
+  <build_depend>eigen</build_depend>
+  <build_depend>ceres</build_depend>
+  <build_depend>gtsam</build_depend>
+  <build_depend>tbb</build_depend>
+
+  <exec_depend>eigen</exec_depend>
+  <exec_depend>ceres</exec_depend>
+  <exec_depend>gtsam</exec_depend>
+  <exec_depend>tbb</exec_depend>
 
   <export>
-    <build_type>ament_cmake</build_type>
+    <cpp cflags="-std=c++17"/>
   </export>
 </package>

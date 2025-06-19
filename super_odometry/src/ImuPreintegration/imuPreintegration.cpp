@@ -3,60 +3,44 @@
 //
 #include "super_odometry/ImuPreintegration/imuPreintegration.h"
 
-
 namespace super_odometry {
 
-    imuPreintegration::imuPreintegration(const rclcpp::NodeOptions & options)
-    : Node("imu_preintegration_node", options) {
+    imuPreintegration::imuPreintegration(ros::NodeHandle& nh) : nh_(nh) {
     }
     
     void imuPreintegration::initInterface() {
-        //! Callback Groups
-        cb_group_ = create_callback_group(rclcpp::CallbackGroupType::Reentrant);
-        rclcpp::SubscriptionOptions sub_options;
-        sub_options.callback_group = cb_group_;
-
-        rclcpp::QoS imu_qos(10);
-        imu_qos.best_effort();  // Use BEST_EFFORT reliability
-        imu_qos.keep_last(10);  // Keep last 10 messages
-
-        if (!readGlobalparam(shared_from_this())) {
-            RCLCPP_ERROR(this->get_logger(), "[SuperOdometry::imuPreintegration] Could not read global parameters. Exiting...");
-            rclcpp::shutdown();
+        if (!readGlobalparam(nh_)) {
+            ROS_ERROR("[SuperOdometry::imuPreintegration] Could not read global parameters. Exiting...");
+            ros::shutdown();
         }
 
         if (!readParameters()) {
-            RCLCPP_ERROR(this->get_logger(), "[SuperOdometry::imuPreintegration] Could not read local parameters. Exiting...");
-            rclcpp::shutdown();
+            ROS_ERROR("[SuperOdometry::imuPreintegration] Could not read local parameters. Exiting...");
+            ros::shutdown();
         }
 
-        if (!readCalibration(shared_from_this()))
-        {
-            RCLCPP_ERROR(this->get_logger(), "[SuperOdometry::imuPreintegration] Could not read calibration parameters. Exiting...");
-            rclcpp::shutdown();
+        if (!readCalibration(nh_)) {
+            ROS_ERROR("[SuperOdometry::imuPreintegration] Could not read calibration parameters. Exiting...");
+            ros::shutdown();
         }
 
-        RCLCPP_INFO(this->get_logger(), "[SuperOdometry::imuPreintegration] use_imu_rol_pitch:  %d", config_.use_imu_roll_pitch);
+        ROS_INFO("[SuperOdometry::imuPreintegration] use_imu_rol_pitch:  %d", config_.use_imu_roll_pitch);
 
         //subscribe and publish relevant topics
-        subImu = this->create_subscription<sensor_msgs::msg::Imu>(
-            IMU_TOPIC, imu_qos,
-            std::bind(&imuPreintegration::imuHandler, this,
-                        std::placeholders::_1), sub_options);
-        subLaserOdometry = this->create_subscription<nav_msgs::msg::Odometry>(
-            ProjectName+"/laser_odometry", 5,
-            std::bind(&imuPreintegration::laserodometryHandler, this,
-                        std::placeholders::_1), sub_options);
+        subImu = nh_.subscribe(IMU_TOPIC, 10, 
+            &imuPreintegration::imuHandler, this);
+        subLaserOdometry = nh_.subscribe(ProjectName+"/laser_odometry", 5,
+            &imuPreintegration::laserodometryHandler, this);
 
-        pubImuOdometry = this->create_publisher<nav_msgs::msg::Odometry>(
+        pubImuOdometry = nh_.advertise<nav_msgs::Odometry>(
             ProjectName+"/state_estimation", 10);
-        pubHealthStatus = this->create_publisher<std_msgs::msg::Bool>(
+        pubHealthStatus = nh_.advertise<std_msgs::Bool>(
             ProjectName+"/state_estimation_health", 1);
-        pubImuPath = this->create_publisher<nav_msgs::msg::Path>(
+        pubImuPath = nh_.advertise<nav_msgs::Path>(
             ProjectName+"/imuodom_path", 1);
         
         // set relevant parameter
-        std::shared_ptr<gtsam::PreintegrationParams> p = gtsam::PreintegrationParams::MakeSharedU(config_.imuGravity);
+        boost::shared_ptr<gtsam::PreintegrationParams> p = gtsam::PreintegrationParams::MakeSharedU(config_.imuGravity);
         
         p->accelerometerCovariance =
                 gtsam::Matrix33::Identity(3, 3) * pow(config_.imuAccNoise, 2); // acc white noise in continuous
@@ -76,7 +60,6 @@ namespace super_odometry {
                                                              1e-1);                    // 1e-2 ~ 1e-3 seems to be good
         correctionNoise = gtsam::noiseModel::Isotropic::Sigma(6, config_.lidar_correction_noise); // meter
 
-
         noiseModelBetweenBias = (gtsam::Vector(6)
                 << config_.imuAccBiasN,
                 config_.imuAccBiasN, config_.imuAccBiasN, config_.imuGyrBiasN, config_.imuGyrBiasN, config_.imuGyrBiasN)
@@ -93,35 +76,21 @@ namespace super_odometry {
             imu2Lidar = imu2cam.compose(cam2Lidar);
             lidar2Imu = imu2Lidar.inverse();
         }
-
     }
     
+    bool imuPreintegration::readParameters() {
+        nh_.param<float>("imu_preintegration_node/acc_n", config_.imuAccNoise, 1e-3);
+        nh_.param<float>("imu_preintegration_node/acc_w", config_.imuAccBiasN, 1e-3);
+        nh_.param<float>("imu_preintegration_node/gyr_n", config_.imuGyrNoise, 1e-6);
+        nh_.param<float>("imu_preintegration_node/gyr_w", config_.imuGyrBiasN, 1e-6);
+        nh_.param<float>("imu_preintegration_node/g_norm", config_.imuGravity, 9.80511);
+        nh_.param<float>("imu_preintegration_node/lidar_correction_noise", config_.lidar_correction_noise, 0.01);
+        nh_.param<float>("imu_preintegration_node/smooth_factor", config_.smooth_factor, 0.9);
+        nh_.param<bool>("imu_preintegration_node/use_imu_roll_pitch", config_.use_imu_roll_pitch, false);
+        nh_.param<double>("imu_preintegration_node/imu_acc_x_limit", config_.imu_acc_x_limit, 1.0);
+        nh_.param<double>("imu_preintegration_node/imu_acc_y_limit", config_.imu_acc_y_limit, 1.0);
+        nh_.param<double>("imu_preintegration_node/imu_acc_z_limit", config_.imu_acc_z_limit, 1.0);
 
-    bool imuPreintegration::readParameters()
-    {
-        this->declare_parameter<float>("imu_preintegration_node.acc_n", 1e-3);
-        this->declare_parameter<float>("imu_preintegration_node.acc_w", 1e-3);
-        this->declare_parameter<float>("imu_preintegration_node.gyr_n", 1e-6);
-        this->declare_parameter<float>("imu_preintegration_node.gyr_w", 1e-6);
-        this->declare_parameter<float>("imu_preintegration_node.g_norm", 9.80511);
-        this->declare_parameter<float>("imu_preintegration_node.lidar_correction_noise",0.01);
-        this->declare_parameter<float>("imu_preintegration_node.smooth_factor",0.9);
-        this->declare_parameter<bool>("imu_preintegration_node.use_imu_roll_pitch", false);
-        this->declare_parameter<double>("imu_preintegration_node.imu_acc_x_limit", 1.0);
-        this->declare_parameter<double>("imu_preintegration_node.imu_acc_y_limit", 1.0);
-        this->declare_parameter<double>("imu_preintegration_node.imu_acc_z_limit", 1.0);
-
-        config_.imuAccNoise = this->get_parameter("imu_preintegration_node.acc_n").as_double();
-        config_.imuAccBiasN = this->get_parameter("imu_preintegration_node.acc_w").as_double();
-        config_.imuGyrNoise = this->get_parameter("imu_preintegration_node.gyr_n").as_double();
-        config_.imuGyrBiasN = this->get_parameter("imu_preintegration_node.gyr_w").as_double();
-        config_.imuGravity = this->get_parameter("imu_preintegration_node.g_norm").as_double();
-        config_.lidar_correction_noise = this->get_parameter("imu_preintegration_node.lidar_correction_noise").as_double();
-        config_.smooth_factor = this->get_parameter("imu_preintegration_node.smooth_factor").as_double();
-        // config_.use_imu_roll_pitch = this->get_parameter("imu_preintegration_node.use_imu_roll_pitch").as_bool();
-        config_.imu_acc_x_limit = this->get_parameter("imu_preintegration_node.imu_acc_x_limit").as_double();
-        config_.imu_acc_y_limit = this->get_parameter("imu_preintegration_node.imu_acc_y_limit").as_double();
-        config_.imu_acc_z_limit = this->get_parameter("imu_preintegration_node.imu_acc_z_limit").as_double();
         config_.use_imu_roll_pitch = USE_IMU_ROLL_PITCH;
         config_.imu_acc_x_limit = IMU_ACC_X_LIMIT;
         config_.imu_acc_y_limit = IMU_ACC_Y_LIMIT;
@@ -136,7 +105,6 @@ namespace super_odometry {
         }   
 
         return true;
-
     }
 
     void imuPreintegration::resetOptimization() {
@@ -158,9 +126,7 @@ namespace super_odometry {
         systemInitialized = false;
     }
 
-
     void imuPreintegration::reset_graph() {
-
         // get updated noise before reset
         gtsam::noiseModel::Gaussian::shared_ptr updatedPoseNoise, updatedVelNoise, updatedBiasNoise;
 
@@ -172,7 +138,7 @@ namespace super_odometry {
         }
         catch (...)
         {
-            RCLCPP_WARN(this->get_logger(), "Failed to reset graph. No marginal covariance key");
+            ROS_WARN("[SuperOdometry::imuPreintegration] Failed to reset graph. No marginal covariance key");
             updatedPoseNoise = priorPoseNoise;
             updatedVelNoise = priorVelNoise;
             updatedBiasNoise = priorBiasNoise;
@@ -253,7 +219,7 @@ namespace super_odometry {
         while (!imuQueOpt.empty())
         {
             // pop and integrate imu data that is between two optimizations
-            sensor_msgs::msg::Imu *thisImu = &imuQueOpt.front();
+            sensor_msgs::Imu *thisImu = &imuQueOpt.front();
             double imuTime = secs(thisImu);
             if (imuTime < currentCorrectionTime - delta_t)
             {
@@ -275,12 +241,8 @@ namespace super_odometry {
 
     }
 
-
     bool imuPreintegration::build_graph(gtsam::Pose3 lidarPose, double curLaserodomtimestamp) {
-
-
         // add laser pose prior factor
-
         gtsam::Pose3 curPose = lidarPose.compose(lidar2Imu);
 
         // insert predicted values
@@ -318,14 +280,13 @@ namespace super_odometry {
         }
         catch (const gtsam::IndeterminantLinearSystemException &) {
             systemSolvedSuccessfully = false;
-            RCLCPP_WARN(this->get_logger(), "Update failed due to underconstrained call to isam2 in imuPreintegration");
+            ROS_WARN("[SuperOdometry::imuPreintegration] Update failed due to underconstrained call to isam2 in imuPreintegration");
         }
 
         graphFactors.resize(0);
         graphValues.clear();
 
         if (systemSolvedSuccessfully) {
-
             gtsam::Values result = optimizer.calculateEstimate();
             prevPose_ = result.at<gtsam::Pose3>(X(key));
             prevVel_ = result.at<gtsam::Vector3>(V(key));
@@ -349,7 +310,7 @@ namespace super_odometry {
         if (!imuQueImu.empty()) {
             imuIntegratorImu_->resetIntegrationAndSetBias(prevBiasOdom);
             for (int i = 0; i < (int)imuQueImu.size(); ++i) {
-                sensor_msgs::msg::Imu *thisImu = &imuQueImu[i];
+                sensor_msgs::Imu *thisImu = &imuQueImu[i];
                 double imuTime = secs(thisImu);
                 double dt = (lastImuQT < 0) ? (1.0 / 200.0) :(imuTime - lastImuQT);
                 lastImuQT = imuTime;
@@ -367,7 +328,6 @@ namespace super_odometry {
     }
 
     void imuPreintegration::process_imu_odometry(double currentCorrectionTime, gtsam::Pose3 relativePose) {
-
         // reset graph for speed
         if (key > 100) {
             reset_graph();
@@ -383,7 +343,7 @@ namespace super_odometry {
         
         // 3. check optimization
         if (failureDetection(prevVel_, prevBias_) || !successOptimization) {
-            RCLCPP_WARN(this->get_logger(), "failureDetected");
+            ROS_WARN("[SuperOdometry::imuPreintegration] failureDetected");
             resetParams();
             return;
         }
@@ -399,7 +359,7 @@ namespace super_odometry {
                                              const gtsam::imuBias::ConstantBias &biasCur) {
         Eigen::Vector3f vel(velCur.x(), velCur.y(), velCur.z());
         if (vel.norm() > 30) {
-            RCLCPP_WARN(this->get_logger(), "Large velocity, reset IMU-preintegration!");
+            ROS_WARN("[SuperOdometry::imuPreintegration] Large velocity, reset IMU-preintegration!");
             return true;
         }
 
@@ -409,18 +369,18 @@ namespace super_odometry {
                            biasCur.gyroscope().z());
 
         if (ba.norm() > 2.0 || bg.norm() > 1.0) {
-            RCLCPP_WARN(this->get_logger(), "Large bias, reset IMU-preintegration!");
+            ROS_WARN("[SuperOdometry::imuPreintegration] Large bias, reset IMU-preintegration!");
             return true;
         }
 
         return false;
     }
 
-    void imuPreintegration::laserodometryHandler(const nav_msgs::msg::Odometry::SharedPtr odomMsg) {
+    void imuPreintegration::laserodometryHandler(const nav_msgs::Odometry::ConstPtr& odomMsg) {
         std::lock_guard<std::mutex> lock(mBuf);
 
-        cur_frame = odomMsg;
-        double lidarOdomTime = secs(odomMsg);
+        cur_frame = nav_msgs::Odometry::Ptr(new nav_msgs::Odometry(*odomMsg));
+        double lidarOdomTime = odomMsg->header.stamp.toSec();
 
         if (imuQueOpt.empty())
             return;
@@ -468,23 +428,23 @@ namespace super_odometry {
                 velocity_curr.z() = (cur_frame->pose.pose.position.z - last_frame->pose.pose.position.z) /
                                     (secs(cur_frame) - secs(last_frame));
 
-                RCLCPP_INFO(this->get_logger(), "LOOSE CONNECTION WITH IMU DRIVER, PLEASE CHECK HARDWARE!!");
+                ROS_INFO("[SuperOdometry::imuPreintegration] LOOSE CONNECTION WITH IMU DRIVER, PLEASE CHECK HARDWARE!!");
                 RESULT = IMU_STATE::FAIL;
                 health_status = false;
-                nav_msgs::msg::Odometry odometry;
+                nav_msgs::Odometry odometry;
 
-                std_msgs::msg::Bool health_status_msg;
+                std_msgs::Bool health_status_msg;
                 health_status_msg.data = health_status;
-                pubHealthStatus->publish(health_status_msg);
+                pubHealthStatus.publish(health_status_msg);
             }
         }
 
         last_frame = cur_frame;
         last_processed_lidar_time = lidarOdomTime;
     }
-    //TODO: need to consider the extrinsic matrix of imu and lidar
-    sensor_msgs::msg::Imu imuPreintegration::imuConverter(const sensor_msgs::msg::Imu &imu_in) {
-        sensor_msgs::msg::Imu imu_out = imu_in;
+
+    sensor_msgs::Imu imuPreintegration::imuConverter(const sensor_msgs::Imu &imu_in) {
+        sensor_msgs::Imu imu_out = imu_in;
         
         Eigen::Matrix3d imu_laser_R_Gravity;
         imu_laser_R_Gravity=imu_Init->imu_laser_R_Gravity;
@@ -501,7 +461,6 @@ namespace super_odometry {
         imu_out.angular_velocity.y = gyr.y();
         imu_out.angular_velocity.z = gyr.z();
 
-
         // rotate acceleration
         Eigen::Vector3d acc(imu_in.linear_acceleration.x,
                             imu_in.linear_acceleration.y,
@@ -513,13 +472,11 @@ namespace super_odometry {
         imu_out.linear_acceleration.y = acc.y();
         imu_out.linear_acceleration.z = acc.z();
 
-
         // rotate roll pitch yaw
         Eigen::Quaterniond q(imu_in.orientation.w, imu_in.orientation.x,
                              imu_in.orientation.y, imu_in.orientation.z);
 
         q.normalize();
-
 
         Eigen::Quaterniond q_extrinsic;
         q_extrinsic=Eigen::Quaterniond(imu_laser_R_Gravity);
@@ -540,231 +497,218 @@ namespace super_odometry {
         return imu_out;
     }
 
+    void imuPreintegration::imuHandler(const sensor_msgs::Imu::ConstPtr& imu_raw) {
+        std::lock_guard<std::mutex> lock(mBuf);
+        
+        // 1. Pre-process IMU data
+        sensor_msgs::Imu thisImu = imuConverter(*imu_raw);
+        assert(imu_raw->linear_acceleration.x != thisImu.linear_acceleration.x);
 
-   void imuPreintegration::imuHandler(const sensor_msgs::msg::Imu::SharedPtr imu_raw) {
-    std::lock_guard<std::mutex> lock(mBuf);
-    
-    // 1. Pre-process IMU data
-    sensor_msgs::msg::Imu thisImu = imuConverter(*imu_raw);
-    assert(imu_raw->linear_acceleration.x != thisImu.linear_acceleration.x);
+        // 2. Handle IMU initialization for LIVOX sensor
+        if (!handleIMUInitialization(imu_raw, thisImu)) {
+            return;
+        }
 
-    // 2. Handle IMU initialization for LIVOX sensor
-    if (!handleIMUInitialization(imu_raw, thisImu)) {
-        return;
+        // 3. Process timing and queue management
+        processTiming(thisImu);
+
+        // 4. Early return if first optimization not done
+        if (!doneFirstOpt) {
+            return;
+        }
+
+        // 5. Prepare and publish odometry
+        gtsam::NavState currentState = imuIntegratorImu_->predict(prevStateOdom, prevBiasOdom);
+        nav_msgs::Odometry odometry;
+        publishOdometry(thisImu, currentState, odometry);
+        publishTransformsAndPath(odometry, thisImu);   
     }
 
-    // 3. Process timing and queue management
-    processTiming(thisImu);
+    bool imuPreintegration::handleIMUInitialization(const sensor_msgs::Imu::ConstPtr&imu_raw, 
+    sensor_msgs::Imu& thisImu) {   
 
-    // 4. Early return if first optimization not done
-    if (!doneFirstOpt) {
-        return;
+        if (!imu_init_success) {
+            initializeImu(imu_raw);
+        }
+
+        if (config_.sensor == SensorType::LIVOX) {
+            correctLivoxGravity(thisImu);
+        }
+        
+        return imu_init_success; 
     }
 
-    // 5. Prepare and publish odometry
-    gtsam::NavState currentState =imuIntegratorImu_->predict(prevStateOdom, prevBiasOdom);
-    nav_msgs::msg::Odometry odometry;
-    publishOdometry(thisImu, currentState, odometry);
-    publishTransformsAndPath(odometry,  thisImu);   
-   
-   }
+    void imuPreintegration::initializeImu(const sensor_msgs::Imu::ConstPtr& imu_raw) {
+        Imu::Ptr imudata = std::make_shared<Imu>();
+        imudata->time = imu_raw->header.stamp.sec + imu_raw->header.stamp.nsec * 1e-9;
+        imudata->acc = Eigen::Vector3d(imu_raw->linear_acceleration.x,
+                                      imu_raw->linear_acceleration.y,
+                                      imu_raw->linear_acceleration.z);
+        imudata->gyr = Eigen::Vector3d(imu_raw->angular_velocity.x,
+                                      imu_raw->angular_velocity.y,
+                                      imu_raw->angular_velocity.z);
+        imudata->q_w_i = Eigen::Quaterniond(imu_raw->orientation.w,
+                                           imu_raw->orientation.x,
+                                           imu_raw->orientation.y,
+                                           imu_raw->orientation.z);
 
-   bool imuPreintegration::handleIMUInitialization(const sensor_msgs::msg::Imu::SharedPtr&imu_raw, 
-   sensor_msgs::msg::Imu& thisImu) {   
+        imuBuf.addMeas(imudata, imudata->time);
 
-    if (!imu_init_success) {
-        initializeImu(imu_raw);
-    }
+        double first_imu_time = 0.0;
+        imuBuf.getFirstTime(first_imu_time);
 
-    if (config_.sensor == SensorType::LIVOX) {
-        correctLivoxGravity(thisImu);
-    }
-    
-    return imu_init_success; 
-
-   }
-
-   void imuPreintegration::initializeImu(const sensor_msgs::msg::Imu::SharedPtr& imu_raw) {
-    Imu::Ptr imudata = std::make_shared<Imu>();
-    imudata->time = imu_raw->header.stamp.sec + imu_raw->header.stamp.nanosec * 1e-9;
-    imudata->acc = Eigen::Vector3d(imu_raw->linear_acceleration.x,
-                                  imu_raw->linear_acceleration.y,
-                                  imu_raw->linear_acceleration.z);
-    imudata->gyr = Eigen::Vector3d(imu_raw->angular_velocity.x,
-                                  imu_raw->angular_velocity.y,
-                                  imu_raw->angular_velocity.z);
-    imudata->q_w_i = Eigen::Quaterniond(imu_raw->orientation.w,
-                                       imu_raw->orientation.x,
-                                       imu_raw->orientation.y,
-                                       imu_raw->orientation.z);
-
-    imuBuf.addMeas(imudata, imudata->time);
-
-    double first_imu_time = 0.0;
-    imuBuf.getFirstTime(first_imu_time);
-
-    if (imudata->time - first_imu_time > 1.0) {
-        imu_Init->imuInit(imuBuf);
-        imu_init_success = true;
-        imuBuf.clean(imudata->time);
-      std::cout<<"IMU Initialization Process Finish! "<<std::endl;
-    }
-}
-
-
-void imuPreintegration::correctLivoxGravity(sensor_msgs::msg::Imu& thisImu) {
-    const double gravity = 9.8105;
-    Eigen::Vector3d acc(thisImu.linear_acceleration.x,
-                       thisImu.linear_acceleration.y,
-                       thisImu.linear_acceleration.z);
-    acc = acc * gravity / imu_Init->acc_mean.norm();
-    thisImu.linear_acceleration.x = acc.x();
-    thisImu.linear_acceleration.y = acc.y();
-    thisImu.linear_acceleration.z = acc.z();
-}
-
-
-void imuPreintegration::processTiming(const sensor_msgs::msg::Imu& thisImu) {
-    double imuTime = secs(&thisImu);
-    double dt = (lastImuT_imu < 0) ? (1.0 / 200.0) : (imuTime - lastImuT_imu);
-    lastImuT_imu = imuTime;
-    
-    if (dt < 0.001 || dt > 0.5) {
-        dt = 0.005;
-    }
-
-    imuQueOpt.push_back(thisImu);
-    imuQueImu.push_back(thisImu);
-}
-
-
-
-void imuPreintegration::publishOdometry(
-    const sensor_msgs::msg::Imu& thisImu,
-    const gtsam::NavState& currentState, nav_msgs::msg::Odometry &odometry) {
-    
-    prepareOdometryMessage(odometry, thisImu, currentState);
-    
-    if (frame_count++ % 4 == 0) {
-        pubImuOdometry->publish(odometry);
-    }
-
-    // Publish health status
-    std_msgs::msg::Bool health_status_msg;
-    health_status_msg.data = health_status;
-    pubHealthStatus->publish(health_status_msg);
-}
-
-
-
-void imuPreintegration::publishTransformsAndPath(nav_msgs::msg::Odometry &odometry, const sensor_msgs::msg::Imu& thisImu) {
-    publishTransform(odometry, thisImu);
-    updateAndPublishPath(odometry,thisImu);
-}
-
-void imuPreintegration::publishTransform(nav_msgs::msg::Odometry &odometry, const sensor_msgs::msg::Imu& thisImu){
-    
-    tf2_ros::TransformBroadcaster br(this);
-    geometry_msgs::msg::TransformStamped transform_stamped_;
-    tf2::Transform transform;
-    transform_stamped_.header.stamp  = thisImu.header.stamp;
-    transform_stamped_.header.frame_id = WORLD_FRAME;
-    transform_stamped_.child_frame_id = SENSOR_FRAME;
-    
-    tf2::Quaternion q;
-    transform.setOrigin(tf2::Vector3(odometry.pose.pose.position.x, 
-    odometry.pose.pose.position.y, odometry.pose.pose.position.z));
-
-    q.setW(odometry.pose.pose.orientation.w);
-    q.setX(odometry.pose.pose.orientation.x);
-    q.setY(odometry.pose.pose.orientation.y);
-    q.setZ(odometry.pose.pose.orientation.z);
-    transform.setRotation(q);
-    transform_stamped_.transform = tf2::toMsg(transform);
-    if(frame_count%4==0)
-        br.sendTransform(transform_stamped_);
-}
-
-void imuPreintegration::updateAndPublishPath(nav_msgs::msg::Odometry &odometry, const sensor_msgs::msg::Imu& thisImu){
-    static nav_msgs::msg::Path imuPath;
-    static double last_path_time = -1;
-    double curimuTime = secs(&thisImu);
-    if (curimuTime - last_path_time > 0.1)
-    {
-        last_path_time = curimuTime;
-        geometry_msgs::msg::PoseStamped pose_stamped;
-        pose_stamped.header.stamp = thisImu.header.stamp;
-        pose_stamped.header.frame_id = WORLD_FRAME;
-        pose_stamped.pose = odometry.pose.pose;
-        imuPath.poses.push_back(pose_stamped);
-        while (!imuPath.poses.empty() &&
-                abs(secs(&imuPath.poses.front()) -
-                    secs(&imuPath.poses.back())) > 3.0)
-            imuPath.poses.erase(imuPath.poses.begin());
-        if (pubImuPath->get_subscription_count() != 0)
-        {
-            imuPath.header.stamp = thisImu.header.stamp;
-            imuPath.header.frame_id = WORLD_FRAME;
-            pubImuPath->publish(imuPath);
+        if (imudata->time - first_imu_time > 1.0) {
+            imu_Init->imuInit(imuBuf);
+            imu_init_success = true;
+            imuBuf.clean(imudata->time);
+          std::cout<<"IMU Initialization Process Finish! "<<std::endl;
         }
     }
-}
 
-void imuPreintegration::prepareOdometryMessage( nav_msgs::msg::Odometry &odometry, 
-const sensor_msgs::msg::Imu &thisImu, const gtsam::NavState &currentState){
-    
-    Eigen::Quaterniond q_w_curr;    
-    if (config_.use_imu_roll_pitch) {
-        q_w_curr = Eigen::Quaterniond(thisImu.orientation.w, thisImu.orientation.x, thisImu.orientation.y, thisImu.orientation.z);
-    } else {
-        q_w_curr = Eigen::Quaterniond(currentState.quaternion().w(), currentState.quaternion().x(),
-                                      currentState.quaternion().y(), currentState.quaternion().z());
+    void imuPreintegration::correctLivoxGravity(sensor_msgs::Imu& thisImu) {
+        const double gravity = 9.8105;
+        Eigen::Vector3d acc(thisImu.linear_acceleration.x,
+                           thisImu.linear_acceleration.y,
+                           thisImu.linear_acceleration.z);
+        acc = acc * gravity / imu_Init->acc_mean.norm();
+        thisImu.linear_acceleration.x = acc.x();
+        thisImu.linear_acceleration.y = acc.y();
+        thisImu.linear_acceleration.z = acc.z();
     }
 
-    gtsam::Rot3 imuRot(q_w_curr);
-    gtsam::Pose3 imuPose = gtsam::Pose3(imuRot, currentState.position());
-    gtsam::Pose3 lidarPoseOpt = imuPose.compose(imu2Lidar);
+    void imuPreintegration::processTiming(const sensor_msgs::Imu& thisImu) {
+        double imuTime = secs(&thisImu);
+        double dt = (lastImuT_imu < 0) ? (1.0 / 200.0) : (imuTime - lastImuT_imu);
+        lastImuT_imu = imuTime;
+        
+        if (dt < 0.001 || dt > 0.5) {
+            dt = 0.005;
+        }
 
-    Eigen::Vector3d velocity_w_curr(currentState.velocity().x(), currentState.velocity().y(),
-                                    currentState.velocity().z());
-    Eigen::Vector3d velocity_curr = currentState.quaternion().inverse() * velocity_w_curr;
-    
-    
-    odometry.header.stamp = thisImu.header.stamp;
-    odometry.header.frame_id = WORLD_FRAME;
-    odometry.child_frame_id = SENSOR_FRAME;
-    
-    Eigen::Quaterniond q_w_lidar(lidarPoseOpt.rotation().toQuaternion().w(), lidarPoseOpt.rotation().toQuaternion().x(),
-                                    lidarPoseOpt.rotation().toQuaternion().y(), lidarPoseOpt.rotation().toQuaternion().z());
-    q_w_lidar.normalized();
+        imuQueOpt.push_back(thisImu);
+        imuQueImu.push_back(thisImu);
+    }
 
-    odometry.pose.pose.position.x = lidarPoseOpt.translation().x();
-    odometry.pose.pose.position.y = lidarPoseOpt.translation().y();
-    odometry.pose.pose.position.z = lidarPoseOpt.translation().z();
-    odometry.pose.pose.orientation.x = q_w_lidar.x();
-    odometry.pose.pose.orientation.y = q_w_lidar.y();
-    odometry.pose.pose.orientation.z = q_w_lidar.z();
-    odometry.pose.pose.orientation.w = q_w_lidar.w();
+    void imuPreintegration::publishOdometry(
+        const sensor_msgs::Imu& thisImu,
+        const gtsam::NavState& currentState, nav_msgs::Odometry &odometry) {
+        
+        prepareOdometryMessage(odometry, thisImu, currentState);
+        
+        if (frame_count++ % 4 == 0) {
+            pubImuOdometry.publish(odometry);
+        }
 
-    odometry.twist.twist.linear.x = velocity_curr.x();
-    odometry.twist.twist.linear.y = velocity_curr.y();;
-    odometry.twist.twist.linear.z = velocity_curr.z();;
-    odometry.twist.twist.angular.x =
-            thisImu.angular_velocity.x + prevBiasOdom.gyroscope().x();
-    odometry.twist.twist.angular.y =
-            thisImu.angular_velocity.y + prevBiasOdom.gyroscope().y();
-    odometry.twist.twist.angular.z =
-            thisImu.angular_velocity.z + prevBiasOdom.gyroscope().z();
-    odometry.pose.covariance[0] = double(RESULT);
+        // Publish health status
+        std_msgs::Bool health_status_msg;
+        health_status_msg.data = health_status;
+        pubHealthStatus.publish(health_status_msg);
+    }
 
-    odometry.pose.covariance[1] = prevBiasOdom.accelerometer().x();
-    odometry.pose.covariance[2] = prevBiasOdom.accelerometer().y();
-    odometry.pose.covariance[3] = prevBiasOdom.accelerometer().z();
-    odometry.pose.covariance[4] = prevBiasOdom.gyroscope().x();
-    odometry.pose.covariance[5] = prevBiasOdom.gyroscope().y();
-    odometry.pose.covariance[6] = prevBiasOdom.gyroscope().z();
-    odometry.pose.covariance[7] = config_.imuGravity;
-}
+    void imuPreintegration::publishTransformsAndPath(nav_msgs::Odometry &odometry, const sensor_msgs::Imu& thisImu) {
+        publishTransform(odometry, thisImu);
+        updateAndPublishPath(odometry,thisImu);
+    }
 
+    void imuPreintegration::publishTransform(nav_msgs::Odometry &odometry, const sensor_msgs::Imu& thisImu) {
+        tf::TransformBroadcaster br;
+        geometry_msgs::TransformStamped transform_stamped_;
+        tf::Transform transform;
+        transform_stamped_.header.stamp = thisImu.header.stamp;
+        transform_stamped_.header.frame_id = WORLD_FRAME;
+        transform_stamped_.child_frame_id = SENSOR_FRAME;
+        
+        tf::Quaternion q;
+        transform.setOrigin(tf::Vector3(odometry.pose.pose.position.x, 
+            odometry.pose.pose.position.y, odometry.pose.pose.position.z));
+
+        q.setW(odometry.pose.pose.orientation.w);
+        q.setX(odometry.pose.pose.orientation.x);
+        q.setY(odometry.pose.pose.orientation.y);
+        q.setZ(odometry.pose.pose.orientation.z);
+        transform.setRotation(q);
+        tf::transformTFToMsg(transform, transform_stamped_.transform);
+        if(frame_count%4==0)
+            br.sendTransform(transform_stamped_);
+    }
+
+    void imuPreintegration::updateAndPublishPath(nav_msgs::Odometry &odometry, const sensor_msgs::Imu& thisImu) {
+        static nav_msgs::Path imuPath;
+        static double last_path_time = -1;
+        double curimuTime = thisImu.header.stamp.toSec();
+        if (curimuTime - last_path_time > 0.1) {
+            last_path_time = curimuTime;
+            geometry_msgs::PoseStamped pose_stamped;
+            pose_stamped.header.stamp = thisImu.header.stamp;
+            pose_stamped.header.frame_id = WORLD_FRAME;
+            pose_stamped.pose = odometry.pose.pose;
+            imuPath.poses.push_back(pose_stamped);
+            while (!imuPath.poses.empty() &&
+                    abs(imuPath.poses.front().header.stamp.toSec() -
+                        imuPath.poses.back().header.stamp.toSec()) > 3.0)
+                imuPath.poses.erase(imuPath.poses.begin());
+            if (pubImuPath.getNumSubscribers() != 0) {
+                imuPath.header.stamp = thisImu.header.stamp;
+                imuPath.header.frame_id = WORLD_FRAME;
+                pubImuPath.publish(imuPath);
+            }
+        }
+    }
+
+    void imuPreintegration::prepareOdometryMessage( nav_msgs::Odometry &odometry, 
+    const sensor_msgs::Imu &thisImu, const gtsam::NavState &currentState){
+        
+        Eigen::Quaterniond q_w_curr;    
+        if (config_.use_imu_roll_pitch) {
+            q_w_curr = Eigen::Quaterniond(thisImu.orientation.w, thisImu.orientation.x, thisImu.orientation.y, thisImu.orientation.z);
+        } else {
+            q_w_curr = Eigen::Quaterniond(currentState.quaternion().w(), currentState.quaternion().x(),
+                                          currentState.quaternion().y(), currentState.quaternion().z());
+        }
+
+        gtsam::Rot3 imuRot(q_w_curr);
+        gtsam::Pose3 imuPose = gtsam::Pose3(imuRot, currentState.position());
+        gtsam::Pose3 lidarPoseOpt = imuPose.compose(imu2Lidar);
+
+        Eigen::Vector3d velocity_w_curr(currentState.velocity().x(), currentState.velocity().y(),
+                                        currentState.velocity().z());
+        Eigen::Vector3d velocity_curr = currentState.quaternion().inverse() * velocity_w_curr;
+        
+        
+        odometry.header.stamp = thisImu.header.stamp;
+        odometry.header.frame_id = WORLD_FRAME;
+        odometry.child_frame_id = SENSOR_FRAME;
+        
+        Eigen::Quaterniond q_w_lidar(lidarPoseOpt.rotation().toQuaternion().w(), lidarPoseOpt.rotation().toQuaternion().x(),
+                                        lidarPoseOpt.rotation().toQuaternion().y(), lidarPoseOpt.rotation().toQuaternion().z());
+        q_w_lidar.normalized();
+
+        odometry.pose.pose.position.x = lidarPoseOpt.translation().x();
+        odometry.pose.pose.position.y = lidarPoseOpt.translation().y();
+        odometry.pose.pose.position.z = lidarPoseOpt.translation().z();
+        odometry.pose.pose.orientation.x = q_w_lidar.x();
+        odometry.pose.pose.orientation.y = q_w_lidar.y();
+        odometry.pose.pose.orientation.z = q_w_lidar.z();
+        odometry.pose.pose.orientation.w = q_w_lidar.w();
+
+        odometry.twist.twist.linear.x = velocity_curr.x();
+        odometry.twist.twist.linear.y = velocity_curr.y();;
+        odometry.twist.twist.linear.z = velocity_curr.z();;
+        odometry.twist.twist.angular.x =
+                thisImu.angular_velocity.x + prevBiasOdom.gyroscope().x();
+        odometry.twist.twist.angular.y =
+                thisImu.angular_velocity.y + prevBiasOdom.gyroscope().y();
+        odometry.twist.twist.angular.z =
+                thisImu.angular_velocity.z + prevBiasOdom.gyroscope().z();
+        odometry.pose.covariance[0] = double(RESULT);
+
+        odometry.pose.covariance[1] = prevBiasOdom.accelerometer().x();
+        odometry.pose.covariance[2] = prevBiasOdom.accelerometer().y();
+        odometry.pose.covariance[3] = prevBiasOdom.accelerometer().z();
+        odometry.pose.covariance[4] = prevBiasOdom.gyroscope().x();
+        odometry.pose.covariance[5] = prevBiasOdom.gyroscope().y();
+        odometry.pose.covariance[6] = prevBiasOdom.gyroscope().z();
+        odometry.pose.covariance[7] = config_.imuGravity;
+    }
 
 } // end namespace super_odometry

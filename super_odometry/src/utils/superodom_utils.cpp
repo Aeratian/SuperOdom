@@ -3,9 +3,9 @@
 
 #include "super_odometry/utils/superodom_utils.h"
 #include <iostream>
-#include <tf2/LinearMath/Quaternion.h>
-#include <tf2/LinearMath/Matrix3x3.h>
-#include <rclcpp/rclcpp.hpp>
+#include <tf/LinearMath/Quaternion.h>
+#include <tf/LinearMath/Matrix3x3.h>
+#include <ros/ros.h>
 
 namespace super_odometry {
 namespace utils {
@@ -90,8 +90,8 @@ bool saveLocalizationPose(double timestamp, const Transformd &T_w_lidar,
         odom.x = T_w_lidar.pos.x();
         odom.y = T_w_lidar.pos.y();
         odom.z = T_w_lidar.pos.z(); 
-        tf2::Quaternion orientation(T_w_lidar.rot.x(), T_w_lidar.rot.y(), T_w_lidar.rot.z(), T_w_lidar.rot.w());
-        tf2::Matrix3x3(orientation).getRPY(odom.roll, odom.pitch, odom.yaw);
+        tf::Quaternion orientation(T_w_lidar.rot.x(), T_w_lidar.rot.y(), T_w_lidar.rot.z(), T_w_lidar.rot.w());
+        tf::Matrix3x3(orientation).getRPY(odom.roll, odom.pitch, odom.yaw);
     }
 
     odometry_results.push_back(odom);
@@ -184,19 +184,19 @@ void pointAssociateTobeMapped(PointType const *const pi, PointType *const po,
 }
 
 
-tf2::Quaternion extractRollPitch(Eigen::Quaterniond& imu_rotation){
+tf::Quaternion extractRollPitch(Eigen::Quaterniond& imu_rotation){
     double imu_roll, imu_pitch, imu_yaw;
-    tf2::Quaternion orientation(imu_rotation.x(), imu_rotation.y(), imu_rotation.z(), imu_rotation.w());
-    tf2::Matrix3x3(orientation).getRPY(imu_roll, imu_pitch, imu_yaw);
-    tf2::Quaternion quat ;
-    quat.setRPY(imu_roll,imu_pitch, 0.0);
-    RCLCPP_INFO(rclcpp::get_logger("super_odometry"), "Using IMU Roll Pitch in ICP: %f %f %f", imu_roll, imu_pitch, imu_yaw);
+    tf::Quaternion orientation(imu_rotation.x(), imu_rotation.y(), imu_rotation.z(), imu_rotation.w());
+    tf::Matrix3x3(orientation).getRPY(imu_roll, imu_pitch, imu_yaw);
+    tf::Quaternion quat;
+    quat.setRPY(imu_roll, imu_pitch, 0.0);
+    ROS_INFO("Using IMU Roll Pitch in ICP: %f %f %f", imu_roll, imu_pitch, imu_yaw);
     return quat;
 }
 
 void printTransform(const Transformd& T, const std::string& name){
-    std::cout<<name<<": "<<T.pos.transpose()<<std::endl;
-    std::cout<<name<<": "<<T.rot<<std::endl;
+    std::cout << name << " position: " << T.pos.transpose() << std::endl;
+    std::cout << name << " quaternion (w,x,y,z): " << T.rot.w() << ", " << T.rot.x() << ", " << T.rot.y() << ", " << T.rot.z() << std::endl;
 }
 
 void transformOusterPoints(point_os::OusterPointXYZIRT const *const pi, point_os::PointcloudXYZITR *const po, Transformd &transform) {

@@ -1,25 +1,19 @@
 //
 // Created by shibo zhao on 2020-09-27.
 //
-#include "rclcpp/rclcpp.hpp"
+#include "ros/ros.h"
 #include "super_odometry/LaserMapping/laserMapping.h"
 
 int main(int argc, char **argv)
 {
-    rclcpp::init(argc, argv);
-    rclcpp::NodeOptions options;
-    options.arguments({"laser_mapping_node"});
-
-    std::shared_ptr<super_odometry::laserMapping> laserMapping =
-      std::make_shared<super_odometry::laserMapping>(options);
-
-    laserMapping->initInterface();
+    ros::init(argc, argv, "laser_mapping_node");
     
-    rclcpp::executors::MultiThreadedExecutor executor;
-    executor.add_node(laserMapping);
-    executor.spin();
-    // rclcpp::spin(laserMapping->get_node_base_interface());
-    rclcpp::shutdown();
+    ros::NodeHandle nh;
+    super_odometry::laserMapping laserMapping(nh);
+
+    laserMapping.initInterface();
+    
+    ros::spin();
 
     return 0;
 }
