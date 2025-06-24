@@ -71,7 +71,7 @@ namespace super_odometry {
         pubprediction_source = nh_.advertise<std_msgs::String>(
             ProjectName+"/prediction_source", 1);
 
-        process_timer_ = nh_.createTimer(ros::Duration(0.2), [this](const ros::TimerEvent&){ this->process(); });
+        process_timer_ = nh_.createTimer(ros::Duration(0.1), [this](const ros::TimerEvent&){ this->process(); }); 
 
         slam.initROSInterface(nh_);
         slam.localMap.lineRes_ = config_.lineRes;
