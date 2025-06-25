@@ -40,7 +40,7 @@ namespace super_odometry {
             ProjectName+"/imuodom_path", 1);
         
         // set relevant parameter
-        boost::shared_ptr<gtsam::PreintegrationParams> p = gtsam::PreintegrationParams::MakeSharedU(config_.imuGravity);
+        std::shared_ptr<gtsam::PreintegrationParams> p = gtsam::PreintegrationParams::MakeSharedU(config_.imuGravity);
         
         p->accelerometerCovariance =
                 gtsam::Matrix33::Identity(3, 3) * pow(config_.imuAccNoise, 2); // acc white noise in continuous
