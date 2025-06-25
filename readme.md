@@ -55,8 +55,8 @@
   - Provides alignment risk prediction for ICP algorithms
 - **Degeneracy Awareness**
   - Robust detection of environmental degeneracy
-- **ROS 2.0 Integration**
-  - Built on ROS 2 Humble for modern robotics development
+- **ROS 1.0/2.0 Integration**
+  - Built on ROS 1 Noetic and ROS 2 Humble for modern robotics development
 
 <p align="center">
   <img src="./doc/degradtion.png" alt="Super Odometry Pipeline" width="800"/>
@@ -72,7 +72,7 @@
 > Highly recommend to check our docker files to run our code with step 4 and step 5. 
 ### System Requirements
 
-- ROS2 Humble
+- ROS1 Noetic
 - PCL
 - Eigen
 - [Sophus](https://github.com/strasdat/Sophus)
@@ -127,21 +127,22 @@ pip install rerun-sdk
 
 ### Building Docker Image
 ```bash
-cd ros2_humble_docker
-docker build -t superodom-ros2:latest .
+cd ros_noetic_docker
+docker build -t superodom-ros1:latest .
 ```
 
 ### Workspace Structure
 
 First create your own local ROS2 workspace and clone `SuperOdom`: 
 ```bash
-mkdir -p ~/ros2_ws/src
-cd ~/ros2_ws/src
+mkdir -p ~/ros1_ws/src
+cd ~/ros1_ws/src
 git clone https://github.com/superxslam/SuperOdom
 ```
-Clone respective repos and ensure they follow this exact structure under `ros2_ws/src`:
+Clone respective repos and ensure they follow this exact structure under `ros1_ws/src`:
+<!-- TODO: rviz_2d_overlay_plugins in ROS1? -->
 ```
-ros2_ws/src
+ros1_ws/src
 ├── SuperOdom
 ├── livox_ros_driver2
 └── rviz_2d_overlay_plugins
@@ -151,7 +152,7 @@ You can clone `livox_ros_driver2` and `rviz_2d_overlay_plugins` using the follow
 - [Livox-ROS-driver2](https://github.com/Livox-SDK/livox_ros_driver2)
 - [ROS2-jsk-plugin](https://github.com/teamspatzenhirn/rviz_2d_overlay_plugins)
 
-> **Important**: Maintain this exact structure within `ros_ws/src`
+> **Important**: Maintain this exact structure within `ros1_ws/src`
 
 ### Docker Container Setup
 ```bash
@@ -159,39 +160,40 @@ You can clone `livox_ros_driver2` and `rviz_2d_overlay_plugins` using the follow
 xhost +local:docker
 ```
 
-Go to `ros2_humble_docker/container_run.sh` and make sure you change exact directory path for `PROJECT_DIR` and `DATASET_DIR`
+Go to `ros_noetic_docker/container_run.sh` and make sure you change exact directory path for `PROJECT_DIR` and `DATASET_DIR`
 ```bash
 PROJECT_DIR="/path/to/your/superodom"
 DATASET_DIR="/path/to/your/dataset"
 ```
-> **Important**: `PROJECT_DIR` should be the exact directory to `ros2_ws/src`
+> **Important**: `PROJECT_DIR` should be the exact directory to `ros1_ws/src`
 
 Then launch docker container using the following:
 ```bash
 # Grant access
-cd ros2_humble_docker
+cd ros_noetic_docker
 sudo chmod -R 777 container_run.sh
 
 # Start container
-./container_run.sh superodom-ros2 superodom-ros2:latest
-
-# Source ROS2
-source /opt/ros/humble/setup.bash
+./container_run.sh superodom-ros1 superodom-ros1:latest
 ```
-> **Important**: To access container, you can open a new bash window and run `docker exec --privileged -it superodom-ros2 /bin/bash` 
+
+> **Important**: To access container, you can open a new bash window and run `docker exec --privileged -it superodom-ros1 /bin/bash`
 
 Build the workspace within container
 ```bash
-cd ~/ros2_ws/src/livox_ros_driver2
-./build.sh humble 
-cd ~/ros2_ws
-colcon build
+cd ~/ros1_ws/src/livox_ros_driver2
+./build.sh ROS1
+cd ~/ros1_ws
+catkin_make
+echo "source /root/ros1_ws/devel/setup.bash" >> /root/.bashrc
 ```
-> **Important**: make sure you first build `livox_ros_driver2` 
 
+> **Important**: make sure you first build `livox_ros_driver2`
+
+<!-- TODO: Only tested for tartanair now -->
 ## 🚀 5. Launch SuperOdometry
 
-To launch SuperOdometry, we provide demo datasets for Livox-mid360, VLP-16 and OS1-128 sensor [Download Link](https://drive.google.com/drive/folders/1oA0kRFIH0_8oyD32IW1vZitfxYunzdBr?usp=sharing)  
+To launch SuperOdometry, we provide demo datasets for Livox-mid360, VLP-16 and OS1-128 sensor [Download Link](https://drive.google.com/drive/folders/1oA0kRFIH0_8oyD32IW1vZitfxYunzdBr?usp=sharing)
 
 For more challange dataset, feel free to download from our website [slam_mode](https://superodometry.com/iccv23_challenge_LiI) and [localization_mode](https://superodometry.com/superloc). You might want to convert ROS1 bag into ROS2 format using this [link](https://docs.openvins.com/dev-ros1-to-ros2.html). 
 
@@ -219,38 +221,41 @@ extrinsicTranslation_imu_laser: !!opencv-matrix
   data: [-0.011, -0.02329, 0.04412]
 ```
 
-Run SuperOdometry using the following command: 
-
+To run SuperOdometry in ROS1, first start roscore
 ```bash
-source install/setup.bash
-ros2 launch super_odometry livox_mid360.launch.py
-ros2 launch super_odometry os1_128.launch.py
-ros2 launch super_odometry vlp_16.launch.py
+roscore
 ```
-Play your ROS2 dataset:
+
+Next, start SuperOdometry by executing the roslaunch command.
+<!-- TODO: ros2 launch for real world sensors-->
+```bash
+roslaunch super_odometry tartan_air.launch
+# ros2 launch super_odometry livox_mid360.launch.py
+# ros2 launch super_odometry os1_128.launch.py
+# ros2 launch super_odometry vlp_16.launch.py
+```
+Open a new terminal and play your ROS1 dataset:
 ```bash
 # launch this in a new bash window
-docker exec --privileged -it superodom-ros2 /bin/bash
-source install/setup.bash
+docker exec --privileged -it superodom-ros1 /bin/bash
 cd ~/data
-ros2 play $(YOUR_ROS2_DATASET)
+rosbag play $(YOUR_ROS_DATASET)
 ```
 
-Visualize in RVIZ2: 
+Visualize in RVIZ:
 ```bash
 # launch this in a new bash window
-docker exec --privileged -it superodom-ros2 /bin/bash
-source install/setup.bash
-cd ~/ros_ws/src/SuperOdom/super_odometry
-rviz2 -d ros2.rviz
+docker exec --privileged -it superodom-ros1 /bin/bash
+cd ~/ros1_ws/src/SuperOdom/super_odometry
+rviz -d ros1.rviz
 ```
+> RViz in ROS1 can be a bit slow. you can also use RVIZ2 outside docker with [a docker version of ROS1-ROS2 bridge](https://github.com/TommyChangUMD/ros-humble-ros1-bridge-builder) as well.
 
 (⭐ Alternative) Visualize in Rerun: 
 ```bash
 # launch this in a new bash window
-docker exec --privileged -it superodom-ros2 /bin/bash
-source install/setup.bash
-cd ~/ros2_ws/src/SuperOdom/script/visualizers
+docker exec --privileged -it superodom-ros1 /bin/bash
+cd ~/ros1_ws/src/SuperOdom/script/visualizers
 python3 rerun_visualizer.py
 # Open a new bash window on your local device
 rerun
@@ -280,7 +285,7 @@ init_pitch: 0.0                 # Initial pitch angle
 init_yaw: 0.0                   # Initial yaw angle
 ```
 
-Add ground truth map map in launch file
+Add ground truth map in launch file
 ```yaml
 parameters=[LaunchConfiguration("config_file"),
     { "calibration_file": LaunchConfiguration("calibration_file"),
